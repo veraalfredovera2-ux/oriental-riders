@@ -1,1 +1,16 @@
 
+{
+  "expo": {
+    "name": "Oriental Riders",
+    "slug": "oriental-riders",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "web": {
+      "name": "Oriental Riders",
+      "shortName": "Oriental Riders",
+      "display": "standalone",
+      "backgroundColor": "#0A0A0A",
+      "themeColor": "#F5B041"
+    }
+  }
+}
