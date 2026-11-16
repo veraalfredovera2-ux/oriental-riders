@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Vibration, Platform } from 'react-native';
+import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Vibration, Platform, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnvioRider, marcarRetiradoLocal, marcarEntregadoCliente } from './servicios';
 
@@ -7,7 +7,7 @@ export default function App() {
   const [rider, setRider] = useState(null);
   const [tel, setTel] = useState('');
   const [pass, setPass] = useState('');
-  const [tab, setTab] = useState('disponibles');
+  const [tab, setTab] = useState('recoger');
   const [envios, setEnvios] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [aviso, setAviso] = useState(null);
@@ -24,6 +24,11 @@ export default function App() {
     const t = setInterval(cargarEnvios, 3000);
     return () => { clearInterval(t); detenerAlarma(); };
   }, [rider?.id, rider?.disponible]);
+
+  function abrirEnMaps(direccion, distrito) {
+    const destino = encodeURIComponent(`${direccion || ''}, ${distrito || ''}, Lima, Peru`);
+    Linking.openURL(`https://google.com{destino}`);
+  }
 
   function tocarPitido() {
     try {
@@ -82,19 +87,19 @@ export default function App() {
 
   async function tomarEnvio(ped) {
     setCargando(true);
-    try { detenerAlarma(); await aceptarEnvioRider(ped, rider); await cargarEnvios(); setTab('mis_envios'); setAviso('¡Envío asignado! Dirígete al local.'); }
+    try { detenerAlarma(); await aceptarEnvioRider(ped, rider); await cargarEnvios(); setTab('en_camino'); setAviso('¡Pedido asignado! Retíralo en el local.'); }
     catch (e) { await cargarEnvios(); setAviso(e.message); } finally { setCargando(false); }
   }
 
   async function retirarPedido(ped) {
     setCargando(true);
-    try { await marcarRetiradoLocal(ped.id); await cargarEnvios(); setAviso('Pedido marcado como RETIRADO. En camino al cliente.'); }
+    try { await marcarRetiradoLocal(ped.id); await cargarEnvios(); setAviso('Pedido retirado. ¡Buen viaje!'); }
     catch (e) { setAviso(e.message); } finally { setCargando(false); }
   }
 
   async function entregarPedido(ped) {
     setCargando(true);
-    try { await marcarEntregadoCliente(ped); await cargarEnvios(); setAviso('¡Pedido ENTREGADO con éxito!'); }
+    try { await marcarEntregadoCliente(ped); await cargarEnvios(); setTab('entregado'); setAviso('¡Pedido entregado y ganancia sumada!'); }
     catch (e) { setAviso(e.message); } finally { setCargando(false); }
   }
 
