@@ -191,3 +191,147 @@ const st = StyleSheet.create({
   monto: { color: '#4CAF50', fontSize: 28, fontWeight: '900', textAlign: 'center', marginVertical: 4 }
 });
     
+  async function cargarEnvios() {
+    try {
+      const lista = await obtenerEnviosDelivery();
+      const disponibles = (lista || []).filter(p => p.estado === 'Confirmado por local' && !p.rider_id);
+      if (conocidosRef.current === null) { conocidosRef.current = disponibles.map(p => p.id); }
+      else {
+        if (disponibles.some(p => !conocidosRef.current.includes(p.id)) && rider?.disponible) activarAlarma();
+        if (disponibles.length === 0) detenerAlarma();
+        conocidosRef.current = disponibles.map(p => p.id);
+      }
+      setEnvios(lista || []);
+    } catch (e) {}
+  }
+
+  async function entrar() {
+    setCargando(true);
+    try {
+      const r = await ingresarRider({ telefono: tel, password: pass });
+      await AsyncStorage.setItem('sesion_oriental_rider', JSON.stringify(r));
+      setRider(r); tocarPitido();
+    } catch (e) { setAviso(e.message); } finally { setCargando(false); }
+  }
+
+  async function alternarDisponible() {
+    try {
+      const nuevo = !rider.disponible;
+      await actualizarEstadoRider(rider.id, nuevo);
+      const act = { ...rider, disponible: nuevo };
+      setRider(act); await AsyncStorage.setItem('sesion_oriental_rider', JSON.stringify(act));
+      if (nuevo) tocarPitido(); else detenerAlarma();
+    } catch (e) { setAviso(e.message); }
+  }
+
+  async function tomarEnvio(ped) {
+    setCargando(true);
+    try { detenerAlarma(); await aceptarEnvioRider(ped, rider); await cargarEnvios(); setTab('mis_envios'); setAviso('¡Envío asignado! Dirígete al local.'); }
+    catch (e) { await cargarEnvios(); setAviso(e.message); } finally { setCargando(false); }
+  }
+
+  async function retirarPedido(ped) {
+    setCargando(true);
+    try { await marcarRetiradoLocal(ped.id); await cargarEnvios(); setAviso('Pedido marcado como RETIRADO. En camino al cliente.'); }
+    catch (e) { setAviso(e.message); } finally { setCargando(false); }
+  }
+
+  async function entregarPedido(ped) {
+    setCargando(true);
+    try { await marcarEntregadoCliente(ped); await cargarEnvios(); setAviso('¡Pedido ENTREGADO con éxito!'); }
+    catch (e) { setAviso(e.message); } finally { setCargando(false); }
+  }
+
+  async function salir() {
+    await AsyncStorage.removeItem('sesion_oriental_rider');
+    detenerAlarma(); setRider(null);
+  }
+
+  if (!rider) {
+    return (
+      <SafeAreaView style={st.pantalla}>
+        <View style={st.cajaLogin}>
+          <Text style={st.logo}>🛵 ORIENTAL RIDERS</Text>
+          <Text style={st.sub}>App Oficial de Repartidores • Club Sazón</Text>
+          <TextInput style={st.input} placeholder="Teléfono del repartidor" placeholderTextColor="#777" keyboardType="phone-pad" value={tel} onChangeText={setTel} />
+          <TextInput style={st.input} placeholder="Contraseña" placeholderTextColor="#777" secureTextEntry value={pass} onChangeText={setPass} />
+          <TouchableOpacity style={st.btnOro} onPress={entrar} disabled={cargando}><Text style={st.txtOscuro}>{cargando ? 'INGRESANDO...' : 'INICIAR SESIÓN'}</Text></TouchableOpacity>
+          {aviso && <View style={st.alerta}><Text style={st.txtBlanco}>{aviso}</Text><TouchableOpacity onPress={() => setAviso(null)}><Text style={st.txtOro}>OK</Text></TouchableOpacity></View>}
+        </View>
+      </SafeAreaView>
+    );
+    }
+                const disponibles = envios.filter(p => p.estado === 'Confirmado por local' && !p.rider_id);
+  const misActivos = envios.filter(p => p.rider_id === rider.id && p.estado !== 'Completado' && p.estado !== 'Cancelado');
+  const misCompletados = envios.filter(p => p.rider_id === rider.id && p.estado === 'Completado');
+  const gananciaTotal = misCompletados.reduce((acc, p) => acc + Number(p.costo_delivery || 0), 0);
+
+  return (
+    <SafeAreaView style={st.pantalla}>
+      <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <View style={st.fila}>
+          <View><Text style={st.sub}>Repartidor,</Text><Text style={st.titulo}>{rider.nombre_completo}</Text></View>
+          <TouchableOpacity style={st.btnRojo} onPress={salir}><Text style={st.txtBlanco}>SALIR</Text></TouchableOpacity>
+        </View>
+        <TouchableOpacity style={[st.btnEstado, { backgroundColor: rider.disponible ? '#2E7D32' : '#444' }]} onPress={alternarDisponible}>
+          <Text style={st.txtBlanco}>{rider.disponible ? '🟢 DISPONIBLE PARA ENVÍOS' : '🔴 DESCONECTADO (TOCA PARA ACTIVAR)'}</Text>
+        </TouchableOpacity>
+        {sonando && <TouchableOpacity style={st.bannerSonido} onPress={detenerAlarma}><Text style={st.txtBlanco}>🔔 ¡NUEVO PEDIDO LISTO PARA RECOGER! (SILENCIAR)</Text></TouchableOpacity>}
+        {aviso && <View style={st.alerta}><Text style={st.txtBlanco}>{aviso}</Text><TouchableOpacity onPress={() => setAviso(null)}><Text style={st.txtOro}>OK</Text></TouchableOpacity></View>}
+        <View style={st.filaTabs}>
+          <TouchableOpacity style={[st.tab, tab === 'disponibles' && st.tabAct]} onPress={() => setTab('disponibles')}><Text style={st.txtTab}>DISPONIBLES ({disponibles.length})</Text></TouchableOpacity>
+          <TouchableOpacity style={[st.tab, tab === 'mis_envios' && st.tabAct]} onPress={() => setTab('mis_envios')}><Text style={st.txtTab}>MIS ENVÍOS ({misActivos.length})</Text></TouchableOpacity>
+          <TouchableOpacity style={[st.tab, tab === 'ganancias' && st.tabAct]} onPress={() => setTab('ganancias')}><Text style={st.txtTab}>GANANCIAS</Text></TouchableOpacity>
+        </View>
+        {tab === 'disponibles' && (disponibles.length === 0 ? <Text style={st.vacio}>No hay pedidos disponibles en este momento.</Text> : disponibles.map(p => (
+          <View key={p.id} style={st.card}>
+            <Text style={st.cardTit}>🛵 Pedido {p.numero_pedido} • Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
+            <Text style={st.cardTxt}>📍 {p.distrito} — {p.direccion}</Text>
+            <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo} ({p.clientes?.telefono})</Text>
+            <Text style={st.cardTxt}>💵 Total pedido: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
+            <TouchableOpacity style={st.btnOro} onPress={() => tomarEnvio(p)} disabled={cargando}><Text style={st.txtOscuro}>ACEPTAR REPARTO</Text></TouchableOpacity>
+          </View>
+        )))}
+        {tab === 'mis_envios' && (misActivos.length === 0 ? <Text style={st.vacio}>No tienes envíos activos.</Text> : misActivos.map(p => (
+          <View key={p.id} style={st.card}>
+            <Text style={st.cardTit}>📦 {p.numero_pedido} ({p.estado_rider})</Text>
+            <Text style={st.cardTxt}>📍 {p.distrito} — {p.direccion}</Text>
+            <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} — Tel: {p.clientes?.telefono}</Text>
+            {(p.pedido_detalles || []).map(d => <Text key={d.id} style={st.det}>• {d.cantidad}x {d.nombre_producto}</Text>)}
+            <Text style={st.cardTxt}>💵 Cobrar: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
+            {p.estado_rider === 'En camino a recoger' && <TouchableOpacity style={[st.btnOro, { backgroundColor: '#29B6F6' }]} onPress={() => retirarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>1. YA RETIRÉ EL PEDIDO DEL LOCAL</Text></TouchableOpacity>}
+            <TouchableOpacity style={[st.btnOro, { backgroundColor: '#4CAF50' }]} onPress={() => entregarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>2. ENTREGADO AL CLIENTE</Text></TouchableOpacity>
+          </View>
+        )))}
+        {tab === 'ganancias' && (
+          <View>
+            <View style={st.card}><Text style={st.sub}>GANANCIAS ACUMULADAS EN DELIVERIES</Text><Text style={st.saldo}>S/ {gananciaTotal.toFixed(2)}</Text><Text style={st.sub}>{misCompletados.length} entregas completadas</Text></View>
+            {misCompletados.map(p => <View key={p.id} style={st.card}><Text style={st.cardTit}>✅ {p.numero_pedido} — {p.distrito}</Text><Text style={st.cardTxt}>Delivery ganado: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text></View>)}
+          </View>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const st = StyleSheet.create({
+  pantalla: { flex: 1, backgroundColor: '#0A0A0A' }, cajaLogin: { flex: 1, justifyContent: 'center', padding: 24 },
+  logo: { color: '#F5B041', fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 6 },
+  sub: { color: '#AAA', fontSize: 12, textAlign: 'center', marginBottom: 14 },
+  titulo: { color: '#FFF', fontSize: 20, fontWeight: '900' },
+  input: { backgroundColor: '#181818', color: '#FFF', borderWidth: 1, borderColor: '#333', borderRadius: 10, padding: 14, marginBottom: 12 },
+  btnOro: { backgroundColor: '#F5B041', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 10 },
+  btnRojo: { backgroundColor: '#B71C1C', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
+  btnEstado: { padding: 14, borderRadius: 10, alignItems: 'center', marginVertical: 12 },
+  txtOscuro: { color: '#111', fontWeight: '900', fontSize: 13 }, txtBlanco: { color: '#FFF', fontWeight: '900', fontSize: 12 }, txtOro: { color: '#F5B041', fontWeight: '900', marginLeft: 10 },
+  alerta: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#222', borderWidth: 1, borderColor: '#F5B041', padding: 12, borderRadius: 10, marginTop: 10 },
+  bannerSonido: { backgroundColor: '#B81D24', padding: 14, borderRadius: 10, alignItems: 'center', marginBottom: 10 },
+  fila: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  filaTabs: { flexDirection: 'row', gap: 6, marginBottom: 14 },
+  tab: { flex: 1, backgroundColor: '#181818', paddingVertical: 10, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+  tabAct: { borderColor: '#F5B041', backgroundColor: '#2A210D' }, txtTab: { color: '#FFF', fontSize: 10, fontWeight: '900' },
+  card: { backgroundColor: '#161616', borderWidth: 1, borderColor: '#2A2A2A', borderRadius: 12, padding: 14, marginBottom: 12 },
+  cardTit: { color: '#F5B041', fontWeight: '900', fontSize: 15, marginBottom: 6 }, cardTxt: { color: '#DDD', fontSize: 13, marginBottom: 4 }, det: { color: '#AAA', fontSize: 12, marginLeft: 8 },
+  saldo: { color: '#4CAF50', fontSize: 28, fontWeight: '900', textAlign: 'center', marginVertical: 4 }, vacio: { color: '#777', textAlign: 'center', marginTop: 30 }
+});
+    
