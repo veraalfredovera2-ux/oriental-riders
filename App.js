@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Vibration, Platform, Linking } from 'react-native';
+import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Vibration, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnvioRider, marcarRetiradoLocal, marcarEntregadoCliente } from './servicios';
 
@@ -24,11 +24,6 @@ export default function App() {
     const t = setInterval(cargarEnvios, 3000);
     return () => { clearInterval(t); detenerAlarma(); };
   }, [rider?.id, rider?.disponible]);
-
-  function abrirEnMaps(direccion, distrito) {
-    const destino = encodeURIComponent(`${direccion || ''}, ${distrito || ''}, Lima, Peru`);
-    Linking.openURL(`https://google.com{destino}`);
-  }
 
   function tocarPitido() {
     try {
@@ -107,69 +102,22 @@ export default function App() {
     await AsyncStorage.removeItem('sesion_oriental_rider');
     detenerAlarma(); setRider(null);
   }
-  const esPendiente = (est) => est === 'Pendiente' || est === 'Pendiente de confirmación';
 
-  useEffect(() => {
-    const pendientes = (pedidos || []).filter(p => esPendiente(p.estado));
-    if (conocidosRef.current === null) { conocidosRef.current = pendientes.map(p => p.id); return; }
-    if (pendientes.some(p => !conocidosRef.current.includes(p.id)) && audioListo) activarAlarma10Seg();
-    if (pendientes.length === 0) detenerAlarma();
-    conocidosRef.current = pendientes.map(p => p.id);
-  }, [pedidos, audioListo]);
-
-  function tocarPitidoWeb() {
-    try {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!ctxAudioRef.current) ctxAudioRef.current = new Ctx();
-        if (ctxAudioRef.current.state === 'suspended') ctxAudioRef.current.resume();
-        const osc = ctxAudioRef.current.createOscillator(), gain = ctxAudioRef.current.createGain();
-        osc.type = 'triangle'; osc.frequency.setValueAtTime(880, ctxAudioRef.current.currentTime); osc.frequency.setValueAtTime(1100, ctxAudioRef.current.currentTime + 0.18);
-        gain.gain.setValueAtTime(0.6, ctxAudioRef.current.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, ctxAudioRef.current.currentTime + 0.45);
-        osc.connect(gain); gain.connect(ctxAudioRef.current.destination); osc.start(); osc.stop(ctxAudioRef.current.currentTime + 0.45);
-      }
-    } catch (e) {}
+  if (!rider) {
+    return (
+      <SafeAreaView style={st.pantalla}>
+        <View style={st.cajaLogin}>
+          <Text style={st.logo}>🛵 ORIENTAL RIDERS</Text>
+          <Text style={st.sub}>App Oficial de Repartidores • Club Sazón</Text>
+          <TextInput style={st.input} placeholder="Teléfono del repartidor" placeholderTextColor="#777" keyboardType="phone-pad" value={tel} onChangeText={setTel} />
+          <TextInput style={st.input} placeholder="Contraseña" placeholderTextColor="#777" secureTextEntry value={pass} onChangeText={setPass} />
+          <TouchableOpacity style={st.btnOro} onPress={entrar} disabled={cargando}><Text style={st.txtOscuro}>{cargando ? 'INGRESANDO...' : 'INICIAR SESIÓN'}</Text></TouchableOpacity>
+          {aviso && <View style={st.alerta}><Text style={st.txtBlanco}>{aviso}</Text><TouchableOpacity onPress={() => setAviso(null)}><Text style={st.txtOro}>OK</Text></TouchableOpacity></View>}
+        </View>
+      </SafeAreaView>
+    );
   }
-
-  function detenerAlarma() { if (timerRef.current) clearInterval(timerRef.current); if (timeoutRef.current) clearTimeout(timeoutRef.current); timerRef.current = null; timeoutRef.current = null; setSonando(false); }
-  function activarAlarma10Seg() {
-    detenerAlarma(); setSonando(true);
-    try { Vibration.vibrate(); } catch (e) {}
-    try { if (Platform.OS === 'web' && 'Notification' in window && Notification.permission === 'granted') new Notification('🔔 Club Sazón', { body: '¡Llegó un nuevo pedido!' }); } catch (e) {}
-    tocarPitidoWeb();
-    timerRef.current = setInterval(tocarPitidoWeb, 900);
-    timeoutRef.current = setTimeout(detenerAlarma, 10000);
-  }
-
-  function estiloEstado(est) {
-    if (esPendiente(est)) return { badge: { borderColor: '#F5B041', backgroundColor: '#2B210B' }, texto: { color: '#F5B041' } };
-    if (est === 'Completado') return { badge: { borderColor: '#4CAF50', backgroundColor: '#132615' }, texto: { color: '#4CAF50' } };
-    if (est === 'Cancelado') return { badge: { borderColor: '#E53935', backgroundColor: '#2A1215' }, texto: { color: '#E53935' } };
-    return { badge: { borderColor: '#29B6F6', backgroundColor: '#0E2433' }, texto: { color: '#29B6F6' } };
-  }
-
-  async function elegirFoto(destino) {
-    try {
-      setSubiendoImg(true);
-      const url = await subirImagenGaleria();
-      if (!url) return;
-      if (destino === 'prod') setEditProd(prev => ({ ...prev, imagen_url: url }));
-      if (destino === 'promo') setEditPromo(prev => ({ ...prev, imagen_url: url }));
-      mostrarAviso('Foto cargada', 'La imagen se subió correctamente.');
-    } catch (e) { mostrarAviso('Error al subir', e.message); } finally { setSubiendoImg(false); }
-  }
-
-  async function cargarTodoAdmin() { try { const [p, r, pr, c, sc, rd] = await Promise.all([obtenerCatalogo(false), obtenerRecompensas(false), obtenerPromociones(false), obtenerConfigPagos(), obtenerSolicitudesCanje(), obtenerRidersAdmin()]); setProductos(p || []); setRecompensas(r || []); setPromociones(pr || []); setCfgPagos(c); setSolicitudesCanje(sc || []); setRiders(rd || []); } catch (e) {} }
-  async function guardarProd() { if (editProd.nombre.trim()) try { await guardarProductoAdmin(editProd); setEditProd(null); await cargarTodoAdmin(); mostrarAviso('Guardado', 'Producto actualizado.'); } catch (e) { mostrarAviso('Error', e.message); } }
-  async function borrarProd(id) { try { await eliminarProductoAdmin(id); setEditProd(null); await cargarTodoAdmin(); mostrarAviso('Eliminado', 'Plato eliminado del menú.'); } catch (e) { mostrarAviso('Error', e.message); } }
-  async function guardarRider() { if (!editRider.nombre_completo.trim() || !editRider.telefono.trim() || !editRider.password.trim()) return mostrarAviso('Faltan datos', 'Completa nombre, teléfono y contraseña.'); try { await guardarRiderAdmin(editRider); setEditRider(null); await cargarTodoAdmin(); mostrarAviso('Guardado', 'Repartidor actualizado.'); } catch (e) { mostrarAviso('Error', e.message); } }
-  async function borrarRider(id) { try { await eliminarRiderAdmin(id); setEditRider(null); await cargarTodoAdmin(); mostrarAviso('Eliminado', 'Repartidor eliminado.'); } catch (e) { mostrarAviso('Error', e.message); } }
-  async function cambiarHorarioRapido(prod, nuevoTurno, nuevaDisp) { try { await guardarProductoAdmin({ ...prod, turno: nuevoTurno, disponible: nuevaDisp }); await cargarTodoAdmin(); } catch (e) { mostrarAviso('Error', e.message); } }
-  async function guardarRec() { if (!editRec.titulo.trim() || !String(editRec.puntos_requeridos).trim()) return mostrarAviso('Faltan datos', 'Escribe título y puntos.'); try { await guardarRecompensaAdmin(editRec); setEditRec(null); await cargarTodoAdmin(); mostrarAviso('Guardado', 'Premio actualizado.'); } catch (e) { mostrarAviso('Error', e.message); } }
-  async function guardarPromo() { if (!editPromo.titulo.trim()) return mostrarAviso('Faltan datos', 'Escribe el título.'); try { await guardarPromocionAdmin(editPromo); setEditPromo(null); await cargarTodoAdmin(); mostrarAviso('Guardado', 'Guardado correctamente.'); } catch (e) { mostrarAviso('Error', e.message); } }
-  async function entregarCanje(id) { try { await confirmarEntregaCanje(id); await cargarTodoAdmin(); mostrarAviso('Entregado', 'Canje entregado.'); } catch (e) { mostrarAviso('Error', e.message); } }
-  async function guardarPagos() { try { await guardarConfigPagos(cfgPagos); mostrarAviso('Guardado', 'QR actualizados.'); } catch (e) { mostrarAviso('Error', e.message); } }
-    const libres = envios.filter(p => p.estado === 'Confirmado por local' && !p.rider_id);
+  const libres = envios.filter(p => p.estado === 'Confirmado por local' && !p.rider_id);
   const misEnCamino = envios.filter(p => p.rider_id === rider.id && p.estado !== 'Completado' && p.estado !== 'Cancelado');
   const misEntregados = envios.filter(p => p.rider_id === rider.id && p.estado === 'Completado');
   const gananciaTotal = misEntregados.reduce((acc, p) => acc + Number(p.costo_delivery || 0), 0);
