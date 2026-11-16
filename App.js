@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Vibration, Platform, Linking } from 'react-native';
+import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Vibration, Platform, Linking, Image } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnvioRider, marcarRetiradoLocal, marcarEntregadoCliente } from './servicios';
+
+const LOGO_RIDER = require('./file_00000000ea0081f48c2e66d2ba5fd06d.png');
 
 export default function App() {
   const [rider, setRider] = useState(null);
@@ -112,7 +114,8 @@ export default function App() {
     return (
       <SafeAreaView style={st.pantalla}>
         <View style={st.cajaLogin}>
-          <Text style={st.logo}>🛵 ORIENTAL RIDERS</Text>
+          <Image source={LOGO_RIDER} style={st.logoImg} />
+          <Text style={st.logo}>ORIENTAL RIDERS</Text>
           <Text style={st.sub}>App Oficial de Repartidores • Club Sazón</Text>
           <TextInput style={st.input} placeholder="Teléfono del repartidor" placeholderTextColor="#777" keyboardType="phone-pad" value={tel} onChangeText={setTel} />
           <TextInput style={st.input} placeholder="Contraseña" placeholderTextColor="#777" secureTextEntry value={pass} onChangeText={setPass} />
@@ -131,8 +134,17 @@ export default function App() {
     <SafeAreaView style={st.pantalla}>
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <View style={st.fila}>
-          <View><Text style={st.sub}>Repartidor,</Text><Text style={st.nombre}>{rider.nombre_completo}</Text></View>
-          <TouchableOpacity style={st.btnRojo} onPress={salir}><Text style={st.txtBlanco}>CERRAR SESIÓN</Text></TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+            <Image source={LOGO_RIDER} style={st.logoMini} />
+            <View style={{ flex: 1 }}>
+              <Text style={st.subIzq}>Repartidor • {misEntregados.length} entregados</Text>
+              <Text style={st.nombre}>{rider.nombre_completo}</Text>
+            </View>
+          </View>
+          <TouchableOpacity style={st.btnRojo} onPress={salir}><Text style={st.txtBlanco}>SALIR</Text></TouchableOpacity>
+        </View>
+        <View style={st.tarjetaHorario}>
+          <Text style={st.txtHorario}>⏰ Horario: {rider.hora_entrada || '18:30'} - {rider.hora_salida || '23:50'} • 📅 Libres: {rider.dias_libres || 'Ninguno'}</Text>
         </View>
         <TouchableOpacity style={[st.btnEstado, { backgroundColor: rider.disponible ? '#2E7D32' : '#444' }]} onPress={alternarDisponible}>
           <Text style={st.txtBlanco}>{rider.disponible ? '🟢 DISPONIBLE PARA REPARTOS' : '🔴 DESCONECTADO (TOCA PARA ACTIVAR)'}</Text>
@@ -181,7 +193,7 @@ export default function App() {
 
         {tab === 'ganancias' && (
           <View>
-            <View style={st.card}><Text style={st.sub}>GANANCIAS ACUMULADAS EN DELIVERIES</Text><Text style={st.monto}>S/ {gananciaTotal.toFixed(2)}</Text><Text style={st.sub}>{misEntregados.length} entregas realizadas</Text></View>
+            <View style={st.card}><Text style={st.sub}>GANANCIAS ACUMULADAS EN DELIVERIES</Text><Text style={st.monto}>S/ {gananciaTotal.toFixed(2)}</Text><Text style={st.sub}>📦 Total entregados: {misEntregados.length} pedidos</Text></View>
             {misEntregados.map(p => <View key={p.id} style={st.card}><Text style={st.cardTitulo}>✅ {p.numero_pedido} — {p.distrito}</Text><Text style={st.cardTxt}>Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text></View>)}
           </View>
         )}
@@ -192,18 +204,22 @@ export default function App() {
 
 const st = StyleSheet.create({
   pantalla: { flex: 1, backgroundColor: '#0A0A0A' }, cajaLogin: { flex: 1, justifyContent: 'center', padding: 24 },
-  logo: { color: '#F5B041', fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 6 },
-  sub: { color: '#AAA', fontSize: 13, textAlign: 'center', marginBottom: 12 },
+  logoImg: { width: 120, height: 120, borderRadius: 60, alignSelf: 'center', marginBottom: 12, borderWidth: 2, borderColor: '#F5B041' },
+  logoMini: { width: 46, height: 46, borderRadius: 23, borderWidth: 1.5, borderColor: '#F5B041' },
+  logo: { color: '#F5B041', fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 4 },
+  sub: { color: '#AAA', fontSize: 13, textAlign: 'center', marginBottom: 12 }, subIzq: { color: '#F5B041', fontSize: 11, fontWeight: '800' },
+  tarjetaHorario: { backgroundColor: '#161616', borderWidth: 1, borderColor: '#2E2E2E', borderRadius: 8, padding: 10, marginTop: 10 },
+  txtHorario: { color: '#DDD', fontSize: 12, fontWeight: '700', textAlign: 'center' },
   input: { backgroundColor: '#181818', color: '#FFF', borderWidth: 1, borderColor: '#333', borderRadius: 10, padding: 14, marginBottom: 12 },
   btnOro: { backgroundColor: '#F5B041', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
   btnRojo: { backgroundColor: '#B71C1C', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
   btnMaps: { backgroundColor: '#1565C0', padding: 12, borderRadius: 8, alignItems: 'center', marginVertical: 8 },
   linkMaps: { color: '#4FC3F7', fontSize: 13, fontWeight: '800', textDecorationLine: 'underline', marginBottom: 6 },
-  btnEstado: { padding: 14, borderRadius: 10, alignItems: 'center', marginVertical: 12 },
+  btnEstado: { padding: 14, borderRadius: 10, alignItems: 'center', marginVertical: 10 },
   txtOscuro: { color: '#111', fontWeight: '900', fontSize: 13 }, txtBlanco: { color: '#FFF', fontWeight: '900', fontSize: 12 }, txtOro: { color: '#F5B041', fontWeight: '900' },
   alerta: { backgroundColor: '#222', borderWidth: 1, borderColor: '#F5B041', padding: 12, borderRadius: 10, flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 },
   bannerAlarma: { backgroundColor: '#D32F2F', padding: 14, borderRadius: 10, alignItems: 'center', marginBottom: 10 },
-  fila: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, nombre: { color: '#FFF', fontSize: 20, fontWeight: '900' },
+  fila: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, nombre: { color: '#FFF', fontSize: 19, fontWeight: '900' },
   tabs: { flexDirection: 'row', gap: 4, marginBottom: 14 }, tab: { flex: 1, backgroundColor: '#181818', paddingVertical: 10, paddingHorizontal: 2, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#2A2A2A' },
   tabAct: { borderColor: '#F5B041', backgroundColor: '#261E0D' }, txtTab: { color: '#FFF', fontSize: 9, fontWeight: '900' },
   vacio: { color: '#777', textAlign: 'center', marginTop: 30 },
@@ -211,4 +227,3 @@ const st = StyleSheet.create({
   cardTitulo: { color: '#F5B041', fontWeight: '900', fontSize: 15, marginBottom: 6 }, cardTxt: { color: '#DDD', fontSize: 13, marginBottom: 4 },
   detalle: { color: '#AAA', fontSize: 12, marginLeft: 8 }, monto: { color: '#4CAF50', fontSize: 28, fontWeight: '900', textAlign: 'center', marginVertical: 4 }
 });
-          
