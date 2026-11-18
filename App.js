@@ -46,8 +46,15 @@ export default function App() {
   function liberarWakeLock() { try { if (wakeRef.current) { wakeRef.current.release(); wakeRef.current = null; } } catch (e) {} }
 
   function abrirEnMaps(direccion, distrito) {
-    const texto = [direccion, distrito, 'Lima, Perú'].filter(Boolean).join(', ');
-    const url = `https://google.com{encodeURIComponent(texto)}`;
+    const dir = String(direccion || '').trim();
+    const matchUrl = dir.match(/https?:\/\/[^\s]+/i);
+    let url = '';
+    if (matchUrl) {
+      url = matchUrl.at(0);
+    } else {
+      const texto = [dir, distrito, 'Lima, Perú'].filter(Boolean).join(', ');
+      url = `https://google.com{encodeURIComponent(texto)}`;
+    }
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const win = window.open(url, '_blank');
       if (!win) window.location.href = url;
@@ -205,10 +212,12 @@ export default function App() {
           <TouchableOpacity style={[st.tab, tab === 'entregado' && st.tabAct]} onPress={() => setTab('entregado')}><Text style={st.txtTab}>ENTREGADO ({misEntregados.length})</Text></TouchableOpacity>
           <TouchableOpacity style={[st.tab, tab === 'ganancias' && st.tabAct]} onPress={() => setTab('ganancias')}><Text style={st.txtTab}>GANANCIAS</Text></TouchableOpacity>
         </View>
-                                 {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => (
+        {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => (
           <View key={p.id} style={st.card}>
             <Text style={st.cardTitulo}>📦 Pedido {p.numero_pedido} • Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
-            <TouchableOpacity onPress={() => abrirEnMaps(p.direccion, p.distrito)}><Text style={st.linkMaps}>📍 {p.distrito} - {p.direccion} (VER EN MAPS 🗺️)</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
+              <Text style={st.linkMaps}>📍 {String(p.direccion || '').includes('http') ? 'Ubicación exacta Google Maps' : `${p.distrito} - ${p.direccion}`} (VER EN MAPS 🗺️)</Text>
+            </TouchableOpacity>
             <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} ({p.clientes?.telefono})</Text>
             <Text style={st.cardTxt}>💵 Cobrar: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
             <TouchableOpacity style={st.btnOro} onPress={() => tomarEnvio(p)} disabled={cargando}><Text style={st.txtOscuro}>ACEPTAR Y RECOGER PEDIDO</Text></TouchableOpacity>
@@ -219,7 +228,7 @@ export default function App() {
           <View key={p.id} style={st.card}>
             <Text style={st.cardTitulo}>🛵 {p.numero_pedido} — {p.estado_rider || 'Asignado'}</Text>
             <TouchableOpacity style={st.btnMaps} onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
-              <Text style={st.txtBlanco}>🗺️ ABRIR GOOGLE MAPS: {p.direccion} ({p.distrito})</Text>
+              <Text style={st.txtBlanco}>🗺️ ABRIR EN GOOGLE MAPS ({p.distrito || 'GPS'})</Text>
             </TouchableOpacity>
             <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} • Tel: {p.clientes?.telefono}</Text>
             <Text style={st.cardTxt}>💵 Total: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
@@ -232,7 +241,7 @@ export default function App() {
         {tab === 'entregado' && (misEntregados.length === 0 ? <Text style={st.vacio}>Aún no tienes pedidos entregados.</Text> : misEntregados.map(p => (
           <View key={p.id} style={st.card}>
             <Text style={st.cardTitulo}>✅ Pedido {p.numero_pedido} — ENTREGADO</Text>
-            <Text style={st.cardTxt}>📍 {p.distrito} - {p.direccion}</Text>
+            <Text style={st.cardTxt}>📍 {String(p.direccion || '').includes('http') ? 'Ubicación exacta Google Maps' : `${p.distrito} - ${p.direccion}`}</Text>
             <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo}</Text>
             <Text style={[st.cardTxt, { color: '#4CAF50', fontWeight: '800' }]}>💰 Ganancia Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
           </View>
@@ -274,3 +283,4 @@ const st = StyleSheet.create({
   cardTitulo: { color: '#F5B041', fontWeight: '900', fontSize: 15, marginBottom: 6 }, cardTxt: { color: '#DDD', fontSize: 13, marginBottom: 4 },
   detalle: { color: '#AAA', fontSize: 12, marginLeft: 8 }, monto: { color: '#4CAF50', fontSize: 28, fontWeight: '900', textAlign: 'center', marginVertical: 4 }
 });
+          
