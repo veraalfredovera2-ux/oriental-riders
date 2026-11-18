@@ -3,7 +3,20 @@ import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, Styl
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnvioRider, marcarRetiradoLocal, marcarEntregadoCliente } from './servicios';
 
-const LOGO_RIDER = require('./file_00000000ea0081f48c2e66d2ba5fd06d.png');
+const LOGO_RIDER = require('./file_00000000ea0081f48c2e6662ba5fd06d.png');
+
+async function lanzarNotificacionNativaRider(titulo, cuerpo) {
+  try {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+    const opciones = { body: cuerpo, vibrate:, tag: 'envio-rider-' + Date.now(), renotify: true, requireInteraction: true };
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg && reg.showNotification) { await reg.showNotification(titulo, opciones); return; }
+    }
+    new Notification(titulo, opciones);
+  } catch (e) {}
+}
 
 export default function App() {
   const [rider, setRider] = useState(null);
@@ -14,7 +27,7 @@ export default function App() {
   const [cargando, setCargando] = useState(false);
   const [aviso, setAviso] = useState(null);
   const [sonando, setSonando] = useState(false);
-  const conocidosRef = useRef(null), ctxAudioRef = useRef(null), timerRef = useRef(null), timeoutRef = useRef(null);
+  const conocidosRef = useRef(null), ctxAudioRef = useRef(null), timerRef = useRef(null), timeoutRef = useRef(null), wakeRef = useRef(null);
 
   useEffect(() => {
     AsyncStorage.getItem('sesion_oriental_rider').then(s => { if (s) setRider(JSON.parse(s)); });
@@ -22,26 +35,41 @@ export default function App() {
 
   useEffect(() => {
     if (!rider?.id) return;
+    try { if (Platform.OS === 'web' && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {}
+    if (rider.disponible !== false) activarWakeLock(); else liberarWakeLock();
     cargarEnvios();
     const t = setInterval(cargarEnvios, 3000);
-    return () => { clearInterval(t); detenerAlarma(); };
+    return () => { clearInterval(t); detenerAlarma(); liberarWakeLock(); };
   }, [rider?.id, rider?.disponible]);
 
-  function abrirEnMaps(direccion, distrito) {
-    const destino = encodeURIComponent(`${direccion || ''}, ${distrito || ''}, Lima, Peru`);
-    Linking.openURL(`https://google.com{destino}`);
-  }
+  async function activarWakeLock() { try { if (Platform.OS === 'web' && navigator?.wakeLock && !wakeRef.current) wakeRef.current = await navigator.wakeLock.request('screen'); } catch (e) {} }
+  function liberarWakeLock() { try { if (wakeRef.current) { wakeRef.current.release(); wakeRef.current = null; } } catch (e) {} }
 
+  function abrirEnMaps(direccion, distrito) {
+    const texto = [direccion, distrito, 'Lima, Perú'].filter(Boolean).join(', ');
+    const url = `https://google.com{encodeURIComponent(texto)}`;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const win = window.open(url, '_blank');
+      if (!win) window.location.href = url;
+      return;
+    }
+    Linking.openURL(url);
+  }
   function tocarPitido() {
     try {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         if (!ctxAudioRef.current) ctxAudioRef.current = new Ctx();
         if (ctxAudioRef.current.state === 'suspended') ctxAudioRef.current.resume();
+        const t0 = ctxAudioRef.current.currentTime;
         const osc = ctxAudioRef.current.createOscillator(), gain = ctxAudioRef.current.createGain();
-        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(750, ctxAudioRef.current.currentTime); osc.frequency.setValueAtTime(1050, ctxAudioRef.current.currentTime + 0.16);
-        gain.gain.setValueAtTime(0.6, ctxAudioRef.current.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, ctxAudioRef.current.currentTime + 0.42);
-        osc.connect(gain); gain.connect(ctxAudioRef.current.destination); osc.start(); osc.stop(ctxAudioRef.current.currentTime + 0.42);
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(1050, t0);
+        osc.frequency.setValueAtTime(750, t0 + 0.16);
+        gain.gain.setValueAtTime(0.9, t0);
+        gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.43);
+        osc.connect(gain); gain.connect(ctxAudioRef.current.destination);
+        osc.start(t0); osc.stop(t0 + 0.44);
       }
     } catch (e) {}
   }
@@ -51,8 +79,11 @@ export default function App() {
     detenerAlarma(); setSonando(true);
     try { Vibration.vibrate(); } catch (e) {}
     tocarPitido();
-    timerRef.current = setInterval(tocarPitido, 900);
-    timeoutRef.current = setTimeout(detenerAlarma, 10000);
+    timerRef.current = setInterval(() => {
+      tocarPitido();
+      try { Vibration.vibrate(400); } catch (e) {}
+    }, 850);
+    timeoutRef.current = setTimeout(detenerAlarma, 12000);
   }
 
   async function cargarEnvios() {
@@ -61,7 +92,15 @@ export default function App() {
       setEnvios(lista || []);
       const libres = (lista || []).filter(p => p.estado === 'Confirmado por local' && !p.rider_id);
       if (conocidosRef.current === null) { conocidosRef.current = libres.map(p => p.id); return; }
-      if (libres.some(p => !conocidosRef.current.includes(p.id)) && rider?.disponible !== false) activarAlarma();
+      const nuevos = libres.filter(p => !conocidosRef.current.includes(p.id));
+      if (nuevos.length > 0 && rider?.disponible !== false) {
+        activarAlarma();
+        const ult = nuevos.at(0);
+        lanzarNotificacionNativaRider(
+          `¡Nuevo Delivery ${ult?.numero_pedido || ''}!`,
+          `${ult?.distrito || ''} - ${ult?.direccion || ''} • Delivery: S/ ${Number(ult?.costo_delivery || 0).toFixed(2)}`
+        );
+      }
       if (libres.length === 0) detenerAlarma();
       conocidosRef.current = libres.map(p => p.id);
     } catch (e) {}
@@ -73,6 +112,7 @@ export default function App() {
     try {
       const r = await ingresarRider({ telefono: tel, password: pass });
       await AsyncStorage.setItem('sesion_oriental_rider', JSON.stringify(r));
+      try { if (Platform.OS === 'web' && 'Notification' in window && Notification.permission === 'default') await Notification.requestPermission(); } catch (e) {}
       setRider(r); tocarPitido();
     } catch (e) { setAviso(e.message); } finally { setCargando(false); }
   }
@@ -83,13 +123,21 @@ export default function App() {
       await actualizarEstadoRider(rider.id, nuevo);
       const act = { ...rider, disponible: nuevo };
       setRider(act); await AsyncStorage.setItem('sesion_oriental_rider', JSON.stringify(act));
-      if (nuevo) tocarPitido(); else detenerAlarma();
+      if (nuevo) {
+        tocarPitido();
+        try {
+          if (Platform.OS === 'web' && 'Notification' in window) {
+            const perm = await Notification.requestPermission();
+            if (perm === 'granted') lanzarNotificacionNativaRider('Alertas de envío activadas', 'Recibirás notificaciones con sonido incluso en segundo plano.');
+          }
+        } catch (e) {}
+      } else detenerAlarma();
     } catch (e) { setAviso(e.message); }
   }
 
   async function tomarEnvio(ped) {
     setCargando(true);
-    try { detenerAlarma(); await aceptarEnvioRider(ped, rider); await cargarEnvios(); setTab('en_camino'); setAviso('¡Pedido asignado! Retíralo en el local.'); }
+    try { detenerAlarma(); await aceptarEnvioRider(ped, rider); await cargarEnvios(); setTab('en_camino'); setAviso('Pedido asignado. Retíralo en el local.'); }
     catch (e) { await cargarEnvios(); setAviso(e.message); } finally { setCargando(false); }
   }
 
@@ -109,8 +157,7 @@ export default function App() {
     await AsyncStorage.removeItem('sesion_oriental_rider');
     detenerAlarma(); setRider(null);
   }
-
-  if (!rider) {
+    if (!rider) {
     return (
       <SafeAreaView style={st.pantalla}>
         <View style={st.cajaLogin}>
@@ -125,6 +172,7 @@ export default function App() {
       </SafeAreaView>
     );
   }
+
   const libres = envios.filter(p => p.estado === 'Confirmado por local' && !p.rider_id);
   const misEnCamino = envios.filter(p => p.rider_id === rider.id && p.estado !== 'Completado' && p.estado !== 'Cancelado');
   const misEntregados = envios.filter(p => p.rider_id === rider.id && p.estado === 'Completado');
@@ -144,12 +192,12 @@ export default function App() {
           <TouchableOpacity style={st.btnRojo} onPress={salir}><Text style={st.txtBlanco}>SALIR</Text></TouchableOpacity>
         </View>
         <View style={st.tarjetaHorario}>
-          <Text style={st.txtHorario}>⏰ Horario: {rider.hora_entrada || '18:30'} - {rider.hora_salida || '23:50'} • 📅 Libres: {rider.dias_libres || 'Ninguno'}</Text>
+          <Text style={st.txtHorario}>Horario: {rider.horario_trabajo || rider.hora_entrada || '18:30 - 23:50'} • Libres: {rider.dias_libres || 'Ninguno'}</Text>
         </View>
         <TouchableOpacity style={[st.btnEstado, { backgroundColor: rider.disponible ? '#2E7D32' : '#444' }]} onPress={alternarDisponible}>
           <Text style={st.txtBlanco}>{rider.disponible ? '🟢 DISPONIBLE PARA REPARTOS' : '🔴 DESCONECTADO (TOCA PARA ACTIVAR)'}</Text>
         </TouchableOpacity>
-        {sonando && <TouchableOpacity style={st.bannerAlarma} onPress={detenerAlarma}><Text style={st.txtBlanco}>🔔 ¡NUEVO ENVÍO DISPONIBLE! (TOCA PARA SILENCIAR)</Text></TouchableOpacity>}
+        {sonando && <TouchableOpacity style={st.bannerAlarma} onPress={detenerAlarma}><Text style={st.txtBlanco}>🚨 ¡NUEVO ENVÍO DISPONIBLE! (TOCA PARA SILENCIAR)</Text></TouchableOpacity>}
         {aviso && <View style={st.alerta}><Text style={st.txtBlanco}>{aviso}</Text><TouchableOpacity onPress={() => setAviso(null)}><Text style={st.txtOro}>OK</Text></TouchableOpacity></View>}
         <View style={st.tabs}>
           <TouchableOpacity style={[st.tab, tab === 'recoger' && st.tabAct]} onPress={() => setTab('recoger')}><Text style={st.txtTab}>RECOGER ({libres.length})</Text></TouchableOpacity>
@@ -157,11 +205,10 @@ export default function App() {
           <TouchableOpacity style={[st.tab, tab === 'entregado' && st.tabAct]} onPress={() => setTab('entregado')}><Text style={st.txtTab}>ENTREGADO ({misEntregados.length})</Text></TouchableOpacity>
           <TouchableOpacity style={[st.tab, tab === 'ganancias' && st.tabAct]} onPress={() => setTab('ganancias')}><Text style={st.txtTab}>GANANCIAS</Text></TouchableOpacity>
         </View>
-
-        {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => (
+                                 {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => (
           <View key={p.id} style={st.card}>
-            <Text style={st.cardTitulo}>🛵 Pedido {p.numero_pedido} • Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
-            <TouchableOpacity onPress={() => abrirEnMaps(p.direccion, p.distrito)}><Text style={st.linkMaps}>📍 {p.distrito} — {p.direccion} (VER EN MAPS 🗺️)</Text></TouchableOpacity>
+            <Text style={st.cardTitulo}>📦 Pedido {p.numero_pedido} • Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
+            <TouchableOpacity onPress={() => abrirEnMaps(p.direccion, p.distrito)}><Text style={st.linkMaps}>📍 {p.distrito} - {p.direccion} (VER EN MAPS 🗺️)</Text></TouchableOpacity>
             <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} ({p.clientes?.telefono})</Text>
             <Text style={st.cardTxt}>💵 Cobrar: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
             <TouchableOpacity style={st.btnOro} onPress={() => tomarEnvio(p)} disabled={cargando}><Text style={st.txtOscuro}>ACEPTAR Y RECOGER PEDIDO</Text></TouchableOpacity>
@@ -170,14 +217,14 @@ export default function App() {
 
         {tab === 'en_camino' && (misEnCamino.length === 0 ? <Text style={st.vacio}>No tienes entregas en camino.</Text> : misEnCamino.map(p => (
           <View key={p.id} style={st.card}>
-            <Text style={st.cardTitulo}>📦 {p.numero_pedido} — {p.estado_rider || 'Asignado'}</Text>
+            <Text style={st.cardTitulo}>🛵 {p.numero_pedido} — {p.estado_rider || 'Asignado'}</Text>
             <TouchableOpacity style={st.btnMaps} onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
               <Text style={st.txtBlanco}>🗺️ ABRIR GOOGLE MAPS: {p.direccion} ({p.distrito})</Text>
             </TouchableOpacity>
             <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} • Tel: {p.clientes?.telefono}</Text>
             <Text style={st.cardTxt}>💵 Total: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
             {(p.pedido_detalles || []).map(d => <Text key={d.id} style={st.detalle}>• {d.cantidad}x {d.nombre_producto}</Text>)}
-            {p.estado_rider === 'En camino a recoger' && <TouchableOpacity style={[st.btnOro, { backgroundColor: '#29B6F6' }]} onPress={() => retirarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>1. YA RETIRÉ EL PEDIDO DEL LOCAL</Text></TouchableOpacity>}
+            {p.estado_rider !== 'En camino a recoger' && <TouchableOpacity style={[st.btnOro, { backgroundColor: '#29B6F6' }]} onPress={() => retirarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>1. YA RETIRÉ EL PEDIDO DEL LOCAL</Text></TouchableOpacity>}
             <TouchableOpacity style={[st.btnOro, { backgroundColor: '#4CAF50' }]} onPress={() => entregarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>2. ENTREGADO AL CLIENTE</Text></TouchableOpacity>
           </View>
         )))}
@@ -185,7 +232,7 @@ export default function App() {
         {tab === 'entregado' && (misEntregados.length === 0 ? <Text style={st.vacio}>Aún no tienes pedidos entregados.</Text> : misEntregados.map(p => (
           <View key={p.id} style={st.card}>
             <Text style={st.cardTitulo}>✅ Pedido {p.numero_pedido} — ENTREGADO</Text>
-            <Text style={st.cardTxt}>📍 {p.distrito} — {p.direccion}</Text>
+            <Text style={st.cardTxt}>📍 {p.distrito} - {p.direccion}</Text>
             <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo}</Text>
             <Text style={[st.cardTxt, { color: '#4CAF50', fontWeight: '800' }]}>💰 Ganancia Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
           </View>
@@ -193,8 +240,8 @@ export default function App() {
 
         {tab === 'ganancias' && (
           <View>
-            <View style={st.card}><Text style={st.sub}>GANANCIAS ACUMULADAS EN DELIVERIES</Text><Text style={st.monto}>S/ {gananciaTotal.toFixed(2)}</Text><Text style={st.sub}>📦 Total entregados: {misEntregados.length} pedidos</Text></View>
-            {misEntregados.map(p => <View key={p.id} style={st.card}><Text style={st.cardTitulo}>✅ {p.numero_pedido} — {p.distrito}</Text><Text style={st.cardTxt}>Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text></View>)}
+            <View style={st.card}><Text style={st.sub}>GANANCIAS ACUMULADAS EN DELIVERIES</Text><Text style={st.monto}>S/ {gananciaTotal.toFixed(2)}</Text><Text style={st.sub}>Total entregados: {misEntregados.length} pedidos</Text></View>
+            {misEntregados.map(p => <View key={p.id} style={st.card}><Text style={st.cardTitulo}>✅ {p.numero_pedido} - {p.distrito}</Text><Text style={st.cardTxt}>Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text></View>)}
           </View>
         )}
       </ScrollView>
@@ -208,7 +255,7 @@ const st = StyleSheet.create({
   logoMini: { width: 46, height: 46, borderRadius: 23, borderWidth: 1.5, borderColor: '#F5B041' },
   logo: { color: '#F5B041', fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 4 },
   sub: { color: '#AAA', fontSize: 13, textAlign: 'center', marginBottom: 12 }, subIzq: { color: '#F5B041', fontSize: 11, fontWeight: '800' },
-  tarjetaHorario: { backgroundColor: '#161616', borderWidth: 1, borderColor: '#2E2E2E', borderRadius: 8, padding: 10, marginTop: 10 },
+  tarjetaHorario: { backgroundColor: '#161616', borderWidth: 1, borderColor: '#2E2E2E', borderRadius: 8, padding: 8, marginTop: 10 },
   txtHorario: { color: '#DDD', fontSize: 12, fontWeight: '700', textAlign: 'center' },
   input: { backgroundColor: '#181818', color: '#FFF', borderWidth: 1, borderColor: '#333', borderRadius: 10, padding: 14, marginBottom: 12 },
   btnOro: { backgroundColor: '#F5B041', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
@@ -216,7 +263,7 @@ const st = StyleSheet.create({
   btnMaps: { backgroundColor: '#1565C0', padding: 12, borderRadius: 8, alignItems: 'center', marginVertical: 8 },
   linkMaps: { color: '#4FC3F7', fontSize: 13, fontWeight: '800', textDecorationLine: 'underline', marginBottom: 6 },
   btnEstado: { padding: 14, borderRadius: 10, alignItems: 'center', marginVertical: 10 },
-  txtOscuro: { color: '#111', fontWeight: '900', fontSize: 13 }, txtBlanco: { color: '#FFF', fontWeight: '900', fontSize: 12 }, txtOro: { color: '#F5B041', fontWeight: '900' },
+  txtOscuro: { color: '#0A0A0A', fontWeight: '900', fontSize: 13 }, txtBlanco: { color: '#FFF', fontWeight: '900', fontSize: 12 }, txtOro: { color: '#F5B041', fontWeight: '900' },
   alerta: { backgroundColor: '#222', borderWidth: 1, borderColor: '#F5B041', padding: 12, borderRadius: 10, flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 },
   bannerAlarma: { backgroundColor: '#D32F2F', padding: 14, borderRadius: 10, alignItems: 'center', marginBottom: 10 },
   fila: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, nombre: { color: '#FFF', fontSize: 19, fontWeight: '900' },
