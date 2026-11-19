@@ -5,17 +5,47 @@ import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnv
 
 const LOGO_RIDER = require('./file_00000000ea0081f48c2e6662ba5fd06d.png');
 
-async function lanzarNotificacionNativaRider(titulo, cuerpo) {
+function generarWavDataUri(silencio = false) {
+  const sr = 8000, dur = silencio ? 2 : 1.2, n = Math.floor(sr * dur);
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const freq = (Math.floor(t * 4) % 2 === 0) ? 1050 : 780;
+    const val = silencio ? 1 : Math.round(Math.sin(2 * Math.PI * freq * t) * 32000);
+    v.setInt16(44 + i * 2, val, true);
+  }
+  let bin = '';
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes.at(i));
+  return 'data:audio/wav;base64,' + btoa(bin);
+}
+
+async function registrarSwYNotificarRider(titulo, cuerpo) {
   try {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
-    const opciones = { body: cuerpo, vibrate:, tag: 'envio-rider-' + Date.now(), renotify: true, requireInteraction: true };
+    const opciones = { body: cuerpo, vibrate:, tag: 'envio-rider-' + Date.now(), renotify: true, requireInteraction: true, silent: false };
     if ('serviceWorker' in navigator) {
-      const reg = await navigator.serviceWorker.getRegistration();
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
       if (reg && reg.showNotification) { await reg.showNotification(titulo, opciones); return; }
     }
     new Notification(titulo, opciones);
   } catch (e) {}
+}
+
+function separarDireccionYLink(direccion) {
+  const dir = String(direccion || '').trim();
+  const matchUrl = dir.match(/https?:\/\/[^\s|]+/i);
+  const url = matchUrl ? matchUrl.at(0) : '';
+  const textoLimpio = dir.replace(/\|?\s*https?:\/\/[^\s|]+/gi, '').trim();
+  return { textoLimpio: textoLimpio || (url ? 'Ubicación GPS exacta' : 'Sin dirección'), url };
 }
 
 export default function App() {
@@ -27,34 +57,41 @@ export default function App() {
   const [cargando, setCargando] = useState(false);
   const [aviso, setAviso] = useState(null);
   const [sonando, setSonando] = useState(false);
-  const conocidosRef = useRef(null), ctxAudioRef = useRef(null), timerRef = useRef(null), timeoutRef = useRef(null), wakeRef = useRef(null);
+  const conocidosRef = useRef(null), audioSirenaRef = useRef(null), audioFondoRef = useRef(null), timeoutRef = useRef(null), wakeRef = useRef(null);
 
   useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      try {
+        if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+        const aSirena = new window.Audio(generarWavDataUri(false));
+        aSirena.loop = true;
+        audioSirenaRef.current = aSirena;
+        const aFondo = new window.Audio(generarWavDataUri(true));
+        aFondo.loop = true;
+        aFondo.volume = 0.01;
+        audioFondoRef.current = aFondo;
+      } catch (e) {}
+    }
     AsyncStorage.getItem('sesion_oriental_rider').then(s => { if (s) setRider(JSON.parse(s)); });
   }, []);
 
   useEffect(() => {
     if (!rider?.id) return;
     try { if (Platform.OS === 'web' && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {}
-    if (rider.disponible !== false) activarWakeLock(); else liberarWakeLock();
+    if (rider.disponible !== false) { activarWakeLock(); iniciarKeepAliveFondo(); } else { liberarWakeLock(); detenerKeepAliveFondo(); }
     cargarEnvios();
     const t = setInterval(cargarEnvios, 3000);
-    return () => { clearInterval(t); detenerAlarma(); liberarWakeLock(); };
+    return () => { clearInterval(t); detenerAlarma(); liberarWakeLock(); detenerKeepAliveFondo(); };
   }, [rider?.id, rider?.disponible]);
 
+  function iniciarKeepAliveFondo() { try { if (audioFondoRef.current && audioFondoRef.current.paused) audioFondoRef.current.play().catch(() => {}); } catch (e) {} }
+  function detenerKeepAliveFondo() { try { if (audioFondoRef.current) { audioFondoRef.current.pause(); audioFondoRef.current.currentTime = 0; } } catch (e) {} }
   async function activarWakeLock() { try { if (Platform.OS === 'web' && navigator?.wakeLock && !wakeRef.current) wakeRef.current = await navigator.wakeLock.request('screen'); } catch (e) {} }
   function liberarWakeLock() { try { if (wakeRef.current) { wakeRef.current.release(); wakeRef.current = null; } } catch (e) {} }
 
   function abrirEnMaps(direccion, distrito) {
-    const dir = String(direccion || '').trim();
-    const matchUrl = dir.match(/https?:\/\/[^\s]+/i);
-    let url = '';
-    if (matchUrl) {
-      url = matchUrl.at(0);
-    } else {
-      const texto = [dir, distrito, 'Lima, Perú'].filter(Boolean).join(', ');
-      url = `https://google.com{encodeURIComponent(texto)}`;
-    }
+    const info = separarDireccionYLink(direccion);
+    const url = info.url || `https://google.com{encodeURIComponent([info.textoLimpio, distrito, 'Lima, Perú'].filter(Boolean).join(', '))}`;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const win = window.open(url, '_blank');
       if (!win) window.location.href = url;
@@ -62,35 +99,28 @@ export default function App() {
     }
     Linking.openURL(url);
   }
-  function tocarPitido() {
+  function tocarPitidoPrueba() {
     try {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!ctxAudioRef.current) ctxAudioRef.current = new Ctx();
-        if (ctxAudioRef.current.state === 'suspended') ctxAudioRef.current.resume();
-        const t0 = ctxAudioRef.current.currentTime;
-        const osc = ctxAudioRef.current.createOscillator(), gain = ctxAudioRef.current.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(1050, t0);
-        osc.frequency.setValueAtTime(750, t0 + 0.16);
-        gain.gain.setValueAtTime(0.9, t0);
-        gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.43);
-        osc.connect(gain); gain.connect(ctxAudioRef.current.destination);
-        osc.start(t0); osc.stop(t0 + 0.44);
+      if (audioSirenaRef.current) {
+        audioSirenaRef.current.currentTime = 0;
+        audioSirenaRef.current.play().catch(() => {});
+        setTimeout(() => { if (!sonando && audioSirenaRef.current) { audioSirenaRef.current.pause(); audioSirenaRef.current.currentTime = 0; } }, 700);
       }
     } catch (e) {}
   }
 
-  function detenerAlarma() { if (timerRef.current) clearInterval(timerRef.current); if (timeoutRef.current) clearTimeout(timeoutRef.current); timerRef.current = null; timeoutRef.current = null; setSonando(false); }
+  function detenerAlarma() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = null;
+    try { if (audioSirenaRef.current) { audioSirenaRef.current.pause(); audioSirenaRef.current.currentTime = 0; } } catch (e) {}
+    setSonando(false);
+  }
+
   function activarAlarma() {
     detenerAlarma(); setSonando(true);
     try { Vibration.vibrate(); } catch (e) {}
-    tocarPitido();
-    timerRef.current = setInterval(() => {
-      tocarPitido();
-      try { Vibration.vibrate(400); } catch (e) {}
-    }, 850);
-    timeoutRef.current = setTimeout(detenerAlarma, 12000);
+    try { if (audioSirenaRef.current) { audioSirenaRef.current.currentTime = 0; audioSirenaRef.current.play().catch(() => {}); } } catch (e) {}
+    timeoutRef.current = setTimeout(detenerAlarma, 15000);
   }
 
   async function cargarEnvios() {
@@ -103,9 +133,10 @@ export default function App() {
       if (nuevos.length > 0 && rider?.disponible !== false) {
         activarAlarma();
         const ult = nuevos.at(0);
-        lanzarNotificacionNativaRider(
+        const dirInfo = separarDireccionYLink(ult?.direccion);
+        registrarSwYNotificarRider(
           `¡Nuevo Delivery ${ult?.numero_pedido || ''}!`,
-          `${ult?.distrito || ''} - ${ult?.direccion || ''} • Delivery: S/ ${Number(ult?.costo_delivery || 0).toFixed(2)}`
+          `${ult?.distrito || ''} • ${dirInfo.textoLimpio} • Delivery: S/ ${Number(ult?.costo_delivery || 0).toFixed(2)}`
         );
       }
       if (libres.length === 0) detenerAlarma();
@@ -120,7 +151,7 @@ export default function App() {
       const r = await ingresarRider({ telefono: tel, password: pass });
       await AsyncStorage.setItem('sesion_oriental_rider', JSON.stringify(r));
       try { if (Platform.OS === 'web' && 'Notification' in window && Notification.permission === 'default') await Notification.requestPermission(); } catch (e) {}
-      setRider(r); tocarPitido();
+      setRider(r); iniciarKeepAliveFondo(); tocarPitidoPrueba();
     } catch (e) { setAviso(e.message); } finally { setCargando(false); }
   }
 
@@ -131,14 +162,15 @@ export default function App() {
       const act = { ...rider, disponible: nuevo };
       setRider(act); await AsyncStorage.setItem('sesion_oriental_rider', JSON.stringify(act));
       if (nuevo) {
-        tocarPitido();
+        iniciarKeepAliveFondo();
+        tocarPitidoPrueba();
         try {
           if (Platform.OS === 'web' && 'Notification' in window) {
             const perm = await Notification.requestPermission();
-            if (perm === 'granted') lanzarNotificacionNativaRider('Alertas de envío activadas', 'Recibirás notificaciones con sonido incluso en segundo plano.');
+            if (perm === 'granted') registrarSwYNotificarRider('Alertas en segundo plano activas', 'Recibirás notificaciones con sonido incluso con la pantalla apagada.');
           }
         } catch (e) {}
-      } else detenerAlarma();
+      } else { detenerKeepAliveFondo(); detenerAlarma(); }
     } catch (e) { setAviso(e.message); }
   }
 
@@ -162,7 +194,7 @@ export default function App() {
 
   async function salir() {
     await AsyncStorage.removeItem('sesion_oriental_rider');
-    detenerAlarma(); setRider(null);
+    detenerKeepAliveFondo(); detenerAlarma(); setRider(null);
   }
     if (!rider) {
     return (
@@ -212,40 +244,54 @@ export default function App() {
           <TouchableOpacity style={[st.tab, tab === 'entregado' && st.tabAct]} onPress={() => setTab('entregado')}><Text style={st.txtTab}>ENTREGADO ({misEntregados.length})</Text></TouchableOpacity>
           <TouchableOpacity style={[st.tab, tab === 'ganancias' && st.tabAct]} onPress={() => setTab('ganancias')}><Text style={st.txtTab}>GANANCIAS</Text></TouchableOpacity>
         </View>
-        {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => (
-          <View key={p.id} style={st.card}>
-            <Text style={st.cardTitulo}>📦 Pedido {p.numero_pedido} • Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
-            <TouchableOpacity onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
-              <Text style={st.linkMaps}>📍 {String(p.direccion || '').includes('http') ? 'Ubicación exacta Google Maps' : `${p.distrito} - ${p.direccion}`} (VER EN MAPS 🗺️)</Text>
-            </TouchableOpacity>
-            <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} ({p.clientes?.telefono})</Text>
-            <Text style={st.cardTxt}>💵 Cobrar: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
-            <TouchableOpacity style={st.btnOro} onPress={() => tomarEnvio(p)} disabled={cargando}><Text style={st.txtOscuro}>ACEPTAR Y RECOGER PEDIDO</Text></TouchableOpacity>
-          </View>
-        )))}
+            {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
+          const dirInfo = separarDireccionYLink(p.direccion);
+          return (
+            <View key={p.id} style={st.card}>
+              <Text style={st.cardTitulo}>📦 Pedido {p.numero_pedido} • Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
+              <Text style={st.cardTxt}>📍 Distrito: {p.distrito || 'Sin distrito'}</Text>
+              <Text style={st.cardTxt}>🏠 Dirección: {dirInfo.textoLimpio}</Text>
+              <TouchableOpacity onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
+                <Text style={st.linkMaps}>🗺️ ABRIR UBICACIÓN EN GOOGLE MAPS</Text>
+              </TouchableOpacity>
+              <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} ({p.clientes?.telefono})</Text>
+              <Text style={st.cardTxt}>💵 Cobrar: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
+              <TouchableOpacity style={st.btnOro} onPress={() => tomarEnvio(p)} disabled={cargando}><Text style={st.txtOscuro}>ACEPTAR Y RECOGER PEDIDO</Text></TouchableOpacity>
+            </View>
+          );
+        }))}
 
-        {tab === 'en_camino' && (misEnCamino.length === 0 ? <Text style={st.vacio}>No tienes entregas en camino.</Text> : misEnCamino.map(p => (
-          <View key={p.id} style={st.card}>
-            <Text style={st.cardTitulo}>🛵 {p.numero_pedido} — {p.estado_rider || 'Asignado'}</Text>
-            <TouchableOpacity style={st.btnMaps} onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
-              <Text style={st.txtBlanco}>🗺️ ABRIR EN GOOGLE MAPS ({p.distrito || 'GPS'})</Text>
-            </TouchableOpacity>
-            <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} • Tel: {p.clientes?.telefono}</Text>
-            <Text style={st.cardTxt}>💵 Total: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
-            {(p.pedido_detalles || []).map(d => <Text key={d.id} style={st.detalle}>• {d.cantidad}x {d.nombre_producto}</Text>)}
-            {p.estado_rider !== 'En camino a recoger' && <TouchableOpacity style={[st.btnOro, { backgroundColor: '#29B6F6' }]} onPress={() => retirarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>1. YA RETIRÉ EL PEDIDO DEL LOCAL</Text></TouchableOpacity>}
-            <TouchableOpacity style={[st.btnOro, { backgroundColor: '#4CAF50' }]} onPress={() => entregarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>2. ENTREGADO AL CLIENTE</Text></TouchableOpacity>
-          </View>
-        )))}
+        {tab === 'en_camino' && (misEnCamino.length === 0 ? <Text style={st.vacio}>No tienes entregas en camino.</Text> : misEnCamino.map(p => {
+          const dirInfo = separarDireccionYLink(p.direccion);
+          return (
+            <View key={p.id} style={st.card}>
+              <Text style={st.cardTitulo}>🛵 {p.numero_pedido} — {p.estado_rider || 'Asignado'}</Text>
+              <Text style={st.cardTxt}>📍 Distrito: {p.distrito || 'Sin distrito'}</Text>
+              <Text style={st.cardTxt}>🏠 Dirección: {dirInfo.textoLimpio}</Text>
+              <TouchableOpacity style={st.btnMaps} onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
+                <Text style={st.txtBlanco}>🗺️ ABRIR EN GOOGLE MAPS</Text>
+              </TouchableOpacity>
+              <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} • Tel: {p.clientes?.telefono}</Text>
+              <Text style={st.cardTxt}>💵 Total: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
+              {!!p.notas && <Text style={[st.cardTxt, { color: '#F5B041' }]}>📝 Nota: {p.notas}</Text>}
+              {(p.pedido_detalles || []).map(d => <Text key={d.id} style={st.detalle}>• {d.cantidad}x {d.nombre_producto}</Text>)}
+              {p.estado_rider !== 'En camino a recoger' && <TouchableOpacity style={[st.btnOro, { backgroundColor: '#29B6F6' }]} onPress={() => retirarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>1. YA RETIRÉ EL PEDIDO DEL LOCAL</Text></TouchableOpacity>}
+              <TouchableOpacity style={[st.btnOro, { backgroundColor: '#4CAF50' }]} onPress={() => entregarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>2. ENTREGADO AL CLIENTE</Text></TouchableOpacity>
+            </View>
+          );
+        }))}
 
-        {tab === 'entregado' && (misEntregados.length === 0 ? <Text style={st.vacio}>Aún no tienes pedidos entregados.</Text> : misEntregados.map(p => (
-          <View key={p.id} style={st.card}>
-            <Text style={st.cardTitulo}>✅ Pedido {p.numero_pedido} — ENTREGADO</Text>
-            <Text style={st.cardTxt}>📍 {String(p.direccion || '').includes('http') ? 'Ubicación exacta Google Maps' : `${p.distrito} - ${p.direccion}`}</Text>
-            <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo}</Text>
-            <Text style={[st.cardTxt, { color: '#4CAF50', fontWeight: '800' }]}>💰 Ganancia Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
-          </View>
-        )))}
+        {tab === 'entregado' && (misEntregados.length === 0 ? <Text style={st.vacio}>Aún no tienes pedidos entregados.</Text> : misEntregados.map(p => {
+          const dirInfo = separarDireccionYLink(p.direccion);
+          return (
+            <View key={p.id} style={st.card}>
+              <Text style={st.cardTitulo}>✅ Pedido {p.numero_pedido} — ENTREGADO</Text>
+              <Text style={st.cardTxt}>📍 {p.distrito || ''} • {dirInfo.textoLimpio}</Text>
+              <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo}</Text>
+              <Text style={[st.cardTxt, { color: '#4CAF50', fontWeight: '800' }]}>💰 Ganancia Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
+            </View>
+          );
+        }))}
 
         {tab === 'ganancias' && (
           <View>
@@ -270,7 +316,7 @@ const st = StyleSheet.create({
   btnOro: { backgroundColor: '#F5B041', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
   btnRojo: { backgroundColor: '#B71C1C', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
   btnMaps: { backgroundColor: '#1565C0', padding: 12, borderRadius: 8, alignItems: 'center', marginVertical: 8 },
-  linkMaps: { color: '#4FC3F7', fontSize: 13, fontWeight: '800', textDecorationLine: 'underline', marginBottom: 6 },
+  linkMaps: { color: '#4FC3F7', fontSize: 13, fontWeight: '800', textDecorationLine: 'underline', marginVertical: 6 },
   btnEstado: { padding: 14, borderRadius: 10, alignItems: 'center', marginVertical: 10 },
   txtOscuro: { color: '#0A0A0A', fontWeight: '900', fontSize: 13 }, txtBlanco: { color: '#FFF', fontWeight: '900', fontSize: 12 }, txtOro: { color: '#F5B041', fontWeight: '900' },
   alerta: { backgroundColor: '#222', borderWidth: 1, borderColor: '#F5B041', padding: 12, borderRadius: 10, flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 },
@@ -283,4 +329,4 @@ const st = StyleSheet.create({
   cardTitulo: { color: '#F5B041', fontWeight: '900', fontSize: 15, marginBottom: 6 }, cardTxt: { color: '#DDD', fontSize: 13, marginBottom: 4 },
   detalle: { color: '#AAA', fontSize: 12, marginLeft: 8 }, monto: { color: '#4CAF50', fontSize: 28, fontWeight: '900', textAlign: 'center', marginVertical: 4 }
 });
-          
+    
