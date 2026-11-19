@@ -30,7 +30,7 @@ async function registrarSwYNotificarRider(titulo, cuerpo) {
   try {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
-    const opciones = { body: cuerpo, vibrate:, tag: 'envio-rider-' + Date.now(), renotify: true, requireInteraction: true, silent: false };
+    const opciones = { body: cuerpo, vibrate: Array.of(600, 200, 600, 200, 800), tag: 'envio-rider-' + Date.now(), renotify: true, requireInteraction: true, silent: false };
     if ('serviceWorker' in navigator) {
       const reg = await navigator.serviceWorker.register('/sw.js');
       await navigator.serviceWorker.ready;
@@ -130,7 +130,7 @@ export default function App() {
 
   function activarAlarma() {
     detenerAlarma(); setSonando(true);
-    try { Vibration.vibrate(); } catch (e) {}
+    try { Vibration.vibrate(Array.of(600, 200, 600, 200, 800)); } catch (e) {}
     try { if (audioSirenaRef.current) { audioSirenaRef.current.currentTime = 0; audioSirenaRef.current.play().catch(() => {}); } } catch (e) {}
     timeoutRef.current = setTimeout(detenerAlarma, 15000);
   }
@@ -258,7 +258,7 @@ export default function App() {
           <TouchableOpacity style={[st.tab, tab === 'entregado' && st.tabAct]} onPress={() => setTab('entregado')}><Text style={st.txtTab}>ENTREGADO ({misEntregados.length})</Text></TouchableOpacity>
           <TouchableOpacity style={[st.tab, tab === 'ganancias' && st.tabAct]} onPress={() => setTab('ganancias')}><Text style={st.txtTab}>GANANCIAS</Text></TouchableOpacity>
         </View>
-                  {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
+                 {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
           const dirInfo = separarDireccionYLink(p.direccion);
           return (
             <View key={p.id} style={st.card}>
