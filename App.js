@@ -6,7 +6,7 @@ import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnv
 const LOGO_RIDER = require('./file_00000000ea0081f48c2e6662ba5fd06d.png');
 
 function generarWavDataUri(silencio = false) {
-  const sr = 8000, dur = silencio ? 2 : 1.2, n = Math.floor(sr * dur);
+  const sr = 8000, dur = silencio ? 3 : 1.2, n = Math.floor(sr * dur);
   const buf = new ArrayBuffer(44 + n * 2);
   const v = new DataView(buf);
   const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
@@ -17,7 +17,7 @@ function generarWavDataUri(silencio = false) {
   for (let i = 0; i < n; i++) {
     const t = i / sr;
     const freq = (Math.floor(t * 4) % 2 === 0) ? 1050 : 780;
-    const val = silencio ? 1 : Math.round(Math.sin(2 * Math.PI * freq * t) * 32000);
+    const val = silencio ? 2 : Math.round(Math.sin(2 * Math.PI * freq * t) * 32000);
     v.setInt16(44 + i * 2, val, true);
   }
   let bin = '';
@@ -45,7 +45,7 @@ function separarDireccionYLink(direccion) {
   const matchUrl = dir.match(/https?:\/\/[^\s|]+/i);
   const url = matchUrl ? matchUrl.at(0) : '';
   const textoLimpio = dir.replace(/\|?\s*https?:\/\/[^\s|]+/gi, '').trim();
-  return { textoLimpio: textoLimpio || (url ? 'Ubicación GPS exacta' : 'Sin dirección'), url };
+  return { textoLimpio: textoLimpio || (url ? 'Ubicación exacta Google Maps' : 'Sin dirección'), url };
 }
 
 export default function App() {
@@ -68,7 +68,7 @@ export default function App() {
         audioSirenaRef.current = aSirena;
         const aFondo = new window.Audio(generarWavDataUri(true));
         aFondo.loop = true;
-        aFondo.volume = 0.01;
+        aFondo.volume = 0.02;
         audioFondoRef.current = aFondo;
       } catch (e) {}
     }
@@ -84,8 +84,21 @@ export default function App() {
     return () => { clearInterval(t); detenerAlarma(); liberarWakeLock(); detenerKeepAliveFondo(); };
   }, [rider?.id, rider?.disponible]);
 
-  function iniciarKeepAliveFondo() { try { if (audioFondoRef.current && audioFondoRef.current.paused) audioFondoRef.current.play().catch(() => {}); } catch (e) {} }
-  function detenerKeepAliveFondo() { try { if (audioFondoRef.current) { audioFondoRef.current.pause(); audioFondoRef.current.currentTime = 0; } } catch (e) {} }
+  function iniciarKeepAliveFondo() {
+    try {
+      if (audioFondoRef.current && audioFondoRef.current.paused) audioFondoRef.current.play().catch(() => {});
+      if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new window.MediaMetadata({ title: 'Oriental Riders • Disponible', artist: 'Alertas Activas en Segundo Plano' });
+        navigator.mediaSession.playbackState = 'playing';
+      }
+    } catch (e) {}
+  }
+  function detenerKeepAliveFondo() {
+    try {
+      if (audioFondoRef.current) { audioFondoRef.current.pause(); audioFondoRef.current.currentTime = 0; }
+      if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+    } catch (e) {}
+  }
   async function activarWakeLock() { try { if (Platform.OS === 'web' && navigator?.wakeLock && !wakeRef.current) wakeRef.current = await navigator.wakeLock.request('screen'); } catch (e) {} }
   function liberarWakeLock() { try { if (wakeRef.current) { wakeRef.current.release(); wakeRef.current = null; } } catch (e) {} }
 
@@ -93,8 +106,7 @@ export default function App() {
     const info = separarDireccionYLink(direccion);
     const url = info.url || `https://google.com{encodeURIComponent([info.textoLimpio, distrito, 'Lima, Perú'].filter(Boolean).join(', '))}`;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const win = window.open(url, '_blank');
-      if (!win) window.location.href = url;
+      window.location.assign(url);
       return;
     }
     Linking.openURL(url);
@@ -188,7 +200,7 @@ export default function App() {
 
   async function entregarPedido(ped) {
     setCargando(true);
-    try { await marcarEntregadoCliente(ped); await cargarEnvios(); setTab('entregado'); setAviso('¡Pedido entregado y ganancia sumada!'); }
+    try { await marcarEntregadoCliente(ped); await cargarEnvios(); setAviso('Entrega marcada. Cuando el cliente confirme recepción se sumará tu ganancia.'); }
     catch (e) { setAviso(e.message); } finally { setCargando(false); }
   }
 
@@ -216,6 +228,8 @@ export default function App() {
   const misEnCamino = envios.filter(p => p.rider_id === rider.id && p.estado !== 'Completado' && p.estado !== 'Cancelado');
   const misEntregados = envios.filter(p => p.rider_id === rider.id && p.estado === 'Completado');
   const gananciaTotal = misEntregados.reduce((acc, p) => acc + Number(p.costo_delivery || 0), 0);
+  const porConfirmarCli = misEnCamino.filter(p => p.estado_rider === 'Entregado por rider');
+  const gananciaPendiente = porConfirmarCli.reduce((acc, p) => acc + Number(p.costo_delivery || 0), 0);
 
   return (
     <SafeAreaView style={st.pantalla}>
@@ -231,7 +245,7 @@ export default function App() {
           <TouchableOpacity style={st.btnRojo} onPress={salir}><Text style={st.txtBlanco}>SALIR</Text></TouchableOpacity>
         </View>
         <View style={st.tarjetaHorario}>
-          <Text style={st.txtHorario}>Horario: {rider.horario_trabajo || rider.hora_entrada || '18:30 - 23:50'} • Libres: {rider.dias_libres || 'Ninguno'}</Text>
+          <Text style={st.txtHorario}>Horario: {rider.hora_entrada || '18:30'} - {rider.hora_salida || '23:50'} • Libres: {rider.dias_libres || 'Ninguno'}</Text>
         </View>
         <TouchableOpacity style={[st.btnEstado, { backgroundColor: rider.disponible ? '#2E7D32' : '#444' }]} onPress={alternarDisponible}>
           <Text style={st.txtBlanco}>{rider.disponible ? '🟢 DISPONIBLE PARA REPARTOS' : '🔴 DESCONECTADO (TOCA PARA ACTIVAR)'}</Text>
@@ -244,7 +258,7 @@ export default function App() {
           <TouchableOpacity style={[st.tab, tab === 'entregado' && st.tabAct]} onPress={() => setTab('entregado')}><Text style={st.txtTab}>ENTREGADO ({misEntregados.length})</Text></TouchableOpacity>
           <TouchableOpacity style={[st.tab, tab === 'ganancias' && st.tabAct]} onPress={() => setTab('ganancias')}><Text style={st.txtTab}>GANANCIAS</Text></TouchableOpacity>
         </View>
-            {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
+                  {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
           const dirInfo = separarDireccionYLink(p.direccion);
           return (
             <View key={p.id} style={st.card}>
@@ -263,6 +277,7 @@ export default function App() {
 
         {tab === 'en_camino' && (misEnCamino.length === 0 ? <Text style={st.vacio}>No tienes entregas en camino.</Text> : misEnCamino.map(p => {
           const dirInfo = separarDireccionYLink(p.direccion);
+          const yaEntregoRider = p.estado_rider === 'Entregado por rider';
           return (
             <View key={p.id} style={st.card}>
               <Text style={st.cardTitulo}>🛵 {p.numero_pedido} — {p.estado_rider || 'Asignado'}</Text>
@@ -275,17 +290,25 @@ export default function App() {
               <Text style={st.cardTxt}>💵 Total: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
               {!!p.notas && <Text style={[st.cardTxt, { color: '#F5B041' }]}>📝 Nota: {p.notas}</Text>}
               {(p.pedido_detalles || []).map(d => <Text key={d.id} style={st.detalle}>• {d.cantidad}x {d.nombre_producto}</Text>)}
-              {p.estado_rider !== 'En camino a recoger' && <TouchableOpacity style={[st.btnOro, { backgroundColor: '#29B6F6' }]} onPress={() => retirarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>1. YA RETIRÉ EL PEDIDO DEL LOCAL</Text></TouchableOpacity>}
-              <TouchableOpacity style={[st.btnOro, { backgroundColor: '#4CAF50' }]} onPress={() => entregarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>2. ENTREGADO AL CLIENTE</Text></TouchableOpacity>
+              {!yaEntregoRider && p.estado_rider !== 'En camino a recoger' && (
+                <TouchableOpacity style={[st.btnOro, { backgroundColor: '#29B6F6' }]} onPress={() => retirarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>1. YA RETIRÉ EL PEDIDO DEL LOCAL</Text></TouchableOpacity>
+              )}
+              {!yaEntregoRider ? (
+                <TouchableOpacity style={[st.btnOro, { backgroundColor: '#4CAF50' }]} onPress={() => entregarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>2. ENTREGADO AL CLIENTE</Text></TouchableOpacity>
+              ) : (
+                <View style={st.cajaEsperaCli}>
+                  <Text style={st.txtEsperaCli}>⏳ Entrega marcada. Esperando que el cliente confirme recepción para acreditar S/ {Number(p.costo_delivery || 0).toFixed(2)}.</Text>
+                </View>
+              )}
             </View>
           );
         }))}
 
-        {tab === 'entregado' && (misEntregados.length === 0 ? <Text style={st.vacio}>Aún no tienes pedidos entregados.</Text> : misEntregados.map(p => {
+        {tab === 'entregado' && (misEntregados.length === 0 ? <Text style={st.vacio}>Aún no tienes pedidos entregados confirmados.</Text> : misEntregados.map(p => {
           const dirInfo = separarDireccionYLink(p.direccion);
           return (
             <View key={p.id} style={st.card}>
-              <Text style={st.cardTitulo}>✅ Pedido {p.numero_pedido} — ENTREGADO</Text>
+              <Text style={st.cardTitulo}>✅ Pedido {p.numero_pedido} — COMPLETADO</Text>
               <Text style={st.cardTxt}>📍 {p.distrito || ''} • {dirInfo.textoLimpio}</Text>
               <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo}</Text>
               <Text style={[st.cardTxt, { color: '#4CAF50', fontWeight: '800' }]}>💰 Ganancia Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
@@ -295,7 +318,16 @@ export default function App() {
 
         {tab === 'ganancias' && (
           <View>
-            <View style={st.card}><Text style={st.sub}>GANANCIAS ACUMULADAS EN DELIVERIES</Text><Text style={st.monto}>S/ {gananciaTotal.toFixed(2)}</Text><Text style={st.sub}>Total entregados: {misEntregados.length} pedidos</Text></View>
+            <View style={st.card}>
+              <Text style={st.sub}>GANANCIAS CONFIRMADAS EN DELIVERIES</Text>
+              <Text style={st.monto}>S/ {gananciaTotal.toFixed(2)}</Text>
+              <Text style={st.sub}>Total entregados confirmados: {misEntregados.length} pedidos</Text>
+              {gananciaPendiente > 0 && (
+                <Text style={{ color: '#29B6F6', fontSize: 12, fontWeight: '800', textAlign: 'center', marginTop: 4 }}>
+                  Por confirmar cliente ({porConfirmarCli.length}): S/ {gananciaPendiente.toFixed(2)}
+                </Text>
+              )}
+            </View>
             {misEntregados.map(p => <View key={p.id} style={st.card}><Text style={st.cardTitulo}>✅ {p.numero_pedido} - {p.distrito}</Text><Text style={st.cardTxt}>Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text></View>)}
           </View>
         )}
@@ -318,6 +350,8 @@ const st = StyleSheet.create({
   btnMaps: { backgroundColor: '#1565C0', padding: 12, borderRadius: 8, alignItems: 'center', marginVertical: 8 },
   linkMaps: { color: '#4FC3F7', fontSize: 13, fontWeight: '800', textDecorationLine: 'underline', marginVertical: 6 },
   btnEstado: { padding: 14, borderRadius: 10, alignItems: 'center', marginVertical: 10 },
+  cajaEsperaCli: { backgroundColor: '#0E2433', borderWidth: 1, borderColor: '#29B6F6', padding: 10, borderRadius: 8, marginTop: 8 },
+  txtEsperaCli: { color: '#29B6F6', fontSize: 12, fontWeight: '800', textAlign: 'center' },
   txtOscuro: { color: '#0A0A0A', fontWeight: '900', fontSize: 13 }, txtBlanco: { color: '#FFF', fontWeight: '900', fontSize: 12 }, txtOro: { color: '#F5B041', fontWeight: '900' },
   alerta: { backgroundColor: '#222', borderWidth: 1, borderColor: '#F5B041', padding: 12, borderRadius: 10, flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 },
   bannerAlarma: { backgroundColor: '#D32F2F', padding: 14, borderRadius: 10, alignItems: 'center', marginBottom: 10 },
@@ -329,4 +363,3 @@ const st = StyleSheet.create({
   cardTitulo: { color: '#F5B041', fontWeight: '900', fontSize: 15, marginBottom: 6 }, cardTxt: { color: '#DDD', fontSize: 13, marginBottom: 4 },
   detalle: { color: '#AAA', fontSize: 12, marginLeft: 8 }, monto: { color: '#4CAF50', fontSize: 28, fontWeight: '900', textAlign: 'center', marginVertical: 4 }
 });
-    
