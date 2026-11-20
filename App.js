@@ -3,9 +3,7 @@ import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, Styl
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnvioRider, marcarRetiradoLocal, marcarEntregadoCliente } from './servicios';
 
-const LOGO_RIDER = { uri: '/file_00000000ea0081f48c2e6662ba5fd06d.png' };
-
-
+const LOGO_RIDER = require('./file_00000000ea0081f48c2e6662ba5fd06d.png');
 
 function generarWavDataUri(silencio = false) {
   const sr = 8000, dur = silencio ? 3 : 1.2, n = Math.floor(sr * dur);
@@ -202,7 +200,7 @@ export default function App() {
 
   async function entregarPedido(ped) {
     setCargando(true);
-    try { await marcarEntregadoCliente(ped); await cargarEnvios(); setAviso('Entrega marcada. Cuando el cliente confirme recepción se sumará tu ganancia.'); }
+    try { await marcarEntregadoCliente(ped); await cargarEnvios(); setTab('entregado'); setAviso('¡Entrega completada y ganancia acreditada!'); }
     catch (e) { setAviso(e.message); } finally { setCargando(false); }
   }
 
@@ -230,8 +228,6 @@ export default function App() {
   const misEnCamino = envios.filter(p => p.rider_id === rider.id && p.estado !== 'Completado' && p.estado !== 'Cancelado');
   const misEntregados = envios.filter(p => p.rider_id === rider.id && p.estado === 'Completado');
   const gananciaTotal = misEntregados.reduce((acc, p) => acc + Number(p.costo_delivery || 0), 0);
-  const porConfirmarCli = misEnCamino.filter(p => p.estado_rider === 'Entregado por rider');
-  const gananciaPendiente = porConfirmarCli.reduce((acc, p) => acc + Number(p.costo_delivery || 0), 0);
 
   return (
     <SafeAreaView style={st.pantalla}>
@@ -247,7 +243,7 @@ export default function App() {
           <TouchableOpacity style={st.btnRojo} onPress={salir}><Text style={st.txtBlanco}>SALIR</Text></TouchableOpacity>
         </View>
         <View style={st.tarjetaHorario}>
-          <Text style={st.txtHorario}>Horario: {rider.hora_entrada || '18:30'} - {rider.hora_salida || '23:50'} • Libres: {rider.dias_libres || 'Ninguno'}</Text>
+          <Text style={st.txtHorario}>Horario: {rider.hora_entrada || '18:30'} - {rider.hora_salida || '23:50'} • {rider.dias_libres || 'Sin días libres'}</Text>
         </View>
         <TouchableOpacity style={[st.btnEstado, { backgroundColor: rider.disponible ? '#2E7D32' : '#444' }]} onPress={alternarDisponible}>
           <Text style={st.txtBlanco}>{rider.disponible ? '🟢 DISPONIBLE PARA REPARTOS' : '🔴 DESCONECTADO (TOCA PARA ACTIVAR)'}</Text>
@@ -260,7 +256,7 @@ export default function App() {
           <TouchableOpacity style={[st.tab, tab === 'entregado' && st.tabAct]} onPress={() => setTab('entregado')}><Text style={st.txtTab}>ENTREGADO ({misEntregados.length})</Text></TouchableOpacity>
           <TouchableOpacity style={[st.tab, tab === 'ganancias' && st.tabAct]} onPress={() => setTab('ganancias')}><Text style={st.txtTab}>GANANCIAS</Text></TouchableOpacity>
         </View>
-                 {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
+        {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
           const dirInfo = separarDireccionYLink(p.direccion);
           return (
             <View key={p.id} style={st.card}>
@@ -270,7 +266,7 @@ export default function App() {
               <TouchableOpacity onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
                 <Text style={st.linkMaps}>🗺️ ABRIR UBICACIÓN EN GOOGLE MAPS</Text>
               </TouchableOpacity>
-              <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} ({p.clientes?.telefono})</Text>
+              <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo || 'Cliente'}</Text>
               <Text style={st.cardTxt}>💵 Cobrar: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
               <TouchableOpacity style={st.btnOro} onPress={() => tomarEnvio(p)} disabled={cargando}><Text style={st.txtOscuro}>ACEPTAR Y RECOGER PEDIDO</Text></TouchableOpacity>
             </View>
@@ -279,7 +275,7 @@ export default function App() {
 
         {tab === 'en_camino' && (misEnCamino.length === 0 ? <Text style={st.vacio}>No tienes entregas en camino.</Text> : misEnCamino.map(p => {
           const dirInfo = separarDireccionYLink(p.direccion);
-          const yaEntregoRider = p.estado_rider === 'Entregado por rider';
+          const clienteYaRecibio = Boolean(p.recibido_cliente);
           return (
             <View key={p.id} style={st.card}>
               <Text style={st.cardTitulo}>🛵 {p.numero_pedido} — {p.estado_rider || 'Asignado'}</Text>
@@ -288,18 +284,18 @@ export default function App() {
               <TouchableOpacity style={st.btnMaps} onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
                 <Text style={st.txtBlanco}>🗺️ ABRIR EN GOOGLE MAPS</Text>
               </TouchableOpacity>
-              <Text style={st.cardTxt}>👤 {p.clientes?.nombre_completo} • Tel: {p.clientes?.telefono}</Text>
+              <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo || 'Cliente'}</Text>
               <Text style={st.cardTxt}>💵 Total: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
               {!!p.notas && <Text style={[st.cardTxt, { color: '#F5B041' }]}>📝 Nota: {p.notas}</Text>}
               {(p.pedido_detalles || []).map(d => <Text key={d.id} style={st.detalle}>• {d.cantidad}x {d.nombre_producto}</Text>)}
-              {!yaEntregoRider && p.estado_rider !== 'En camino a recoger' && (
+              {p.estado_rider !== 'En camino a recoger' && (
                 <TouchableOpacity style={[st.btnOro, { backgroundColor: '#29B6F6' }]} onPress={() => retirarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>1. YA RETIRÉ EL PEDIDO DEL LOCAL</Text></TouchableOpacity>
               )}
-              {!yaEntregoRider ? (
-                <TouchableOpacity style={[st.btnOro, { backgroundColor: '#4CAF50' }]} onPress={() => entregarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>2. ENTREGADO AL CLIENTE</Text></TouchableOpacity>
+              {clienteYaRecibio ? (
+                <TouchableOpacity style={[st.btnOro, { backgroundColor: '#4CAF50' }]} onPress={() => entregarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>2. ENTREGADO AL CLIENTE (ACREDITAR GANANCIA)</Text></TouchableOpacity>
               ) : (
                 <View style={st.cajaEsperaCli}>
-                  <Text style={st.txtEsperaCli}>⏳ Entrega marcada. Esperando que el cliente confirme recepción para acreditar S/ {Number(p.costo_delivery || 0).toFixed(2)}.</Text>
+                  <Text style={st.txtEsperaCli}>⏳ Esperando que el cliente pulse "YA RECIBÍ MI PEDIDO" en su app para habilitar el botón Entregado.</Text>
                 </View>
               )}
             </View>
@@ -312,7 +308,7 @@ export default function App() {
             <View key={p.id} style={st.card}>
               <Text style={st.cardTitulo}>✅ Pedido {p.numero_pedido} — COMPLETADO</Text>
               <Text style={st.cardTxt}>📍 {p.distrito || ''} • {dirInfo.textoLimpio}</Text>
-              <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo}</Text>
+              <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo || 'Cliente'}</Text>
               <Text style={[st.cardTxt, { color: '#4CAF50', fontWeight: '800' }]}>💰 Ganancia Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
             </View>
           );
@@ -324,11 +320,6 @@ export default function App() {
               <Text style={st.sub}>GANANCIAS CONFIRMADAS EN DELIVERIES</Text>
               <Text style={st.monto}>S/ {gananciaTotal.toFixed(2)}</Text>
               <Text style={st.sub}>Total entregados confirmados: {misEntregados.length} pedidos</Text>
-              {gananciaPendiente > 0 && (
-                <Text style={{ color: '#29B6F6', fontSize: 12, fontWeight: '800', textAlign: 'center', marginTop: 4 }}>
-                  Por confirmar cliente ({porConfirmarCli.length}): S/ {gananciaPendiente.toFixed(2)}
-                </Text>
-              )}
             </View>
             {misEntregados.map(p => <View key={p.id} style={st.card}><Text style={st.cardTitulo}>✅ {p.numero_pedido} - {p.distrito}</Text><Text style={st.cardTxt}>Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text></View>)}
           </View>
