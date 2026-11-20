@@ -1,8 +1,38 @@
 const ID_PROYECTO = 'pripxtsriyxhafevokjg';
 const SUPABASE_URL = 'https://' + ID_PROYECTO + '.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ShY2V3Oh7gB4ZHSBzI5o_Q_GSMxzmds';
+const VAPID_PUBLIC_KEY = 'BDdITAzUl6okJIKZlfKugOLqEmnwjDeTeCvmBTIEzkzZL0QSqHoT6BVu4Bw1KCaZQ79A2hMiDw22b7SQ0hb0B00';
 
 const limpiarTel = (t) => String(t || '').replace(/\D/g, '');
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const out = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) out[i] = rawData.charCodeAt(i);
+  return out;
+}
+
+export async function suscribirPushRider(riderId) {
+  try {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+    if (Notification.permission !== 'granted') return false;
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) });
+    }
+    const json = sub.toJSON();
+    await fetch(`${SUPABASE_URL}/rest/v1/push_suscripciones?on_conflict=endpoint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify({ rol: 'rider', usuario_id: String(riderId || ''), endpoint: json.endpoint, p256dh: json.keys?.p256dh || '', auth: json.keys?.auth || '', actualizado_en: new Date().toISOString() })
+    });
+    return true;
+  } catch (e) { return false; }
+}
 
 async function apiRest(ruta, metodo = 'GET', cuerpo = null) {
   const op = { method: metodo, cache: 'no-store', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Prefer: 'return=representation' } };
