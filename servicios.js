@@ -26,7 +26,7 @@ export async function ingresarRider({ telefono, password }) {
 
 export const actualizarEstadoRider = (id, disponible) => apiRest(`riders?id=eq.${id}`, 'PATCH', { disponible: Boolean(disponible) });
 
-export const obtenerEnviosDelivery = () => apiRest('pedidos?tipo_entrega=eq.DELIVERY&order=creado_en.desc&select=*,clientes(nombre_completo,telefono),pedido_detalles(*)');
+export const obtenerEnviosDelivery = () => apiRest('pedidos?tipo_entrega=eq.DELIVERY&order=creado_en.desc&select=*,clientes(nombre_completo),pedido_detalles(*)');
 
 export async function aceptarEnvioRider(pedido, rider) {
   const actual = await apiRest(`pedidos?id=eq.${pedido.id}&select=rider_id,estado`);
@@ -40,5 +40,11 @@ export async function aceptarEnvioRider(pedido, rider) {
 export const marcarRetiradoLocal = (id) => apiRest(`pedidos?id=eq.${id}`, 'PATCH', { estado_rider: 'En camino a recoger' });
 
 export async function marcarEntregadoCliente(pedido) {
-  await apiRest(`pedidos?id=eq.${pedido.id}`, 'PATCH', { estado_rider: 'Entregado por rider' });
+  const actual = await apiRest(`pedidos?id=eq.${pedido.id}&select=recibido_cliente,estado`);
+  const reg = actual.at(0);
+  if (reg?.estado === 'Cancelado') throw new Error('Este pedido fue cancelado.');
+  if (!reg?.recibido_cliente) {
+    throw new Error('Pide al cliente que pulse "YA RECIBÍ MI PEDIDO" en su app primero.');
+  }
+  await apiRest(`pedidos?id=eq.${pedido.id}`, 'PATCH', { estado_rider: 'Entregado por rider', estado: 'Completado' });
 }
