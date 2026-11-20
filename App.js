@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Vibration, Platform, Linking, Image } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnvioRider, marcarRetiradoLocal, marcarEntregadoCliente } from './servicios';
+import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnvioRider, marcarRetiradoLocal, marcarEntregadoCliente, suscribirPushRider } from './servicios';
 
 const LOGO_RIDER = { uri: [
   'https://raw.' + '://githubusercontent.com',
@@ -82,7 +82,7 @@ export default function App() {
   useEffect(() => {
     if (!rider?.id) return;
     try { if (Platform.OS === 'web' && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {}
-    if (rider.disponible !== false) { activarWakeLock(); iniciarKeepAliveFondo(); } else { liberarWakeLock(); detenerKeepAliveFondo(); }
+    if (rider.disponible !== false) { activarWakeLock(); iniciarKeepAliveFondo(); suscribirPushRider(rider.id); } else { liberarWakeLock(); detenerKeepAliveFondo(); }
     cargarEnvios();
     const t = setInterval(cargarEnvios, 3000);
     return () => { clearInterval(t); detenerAlarma(); liberarWakeLock(); detenerKeepAliveFondo(); };
@@ -183,7 +183,10 @@ export default function App() {
         try {
           if (Platform.OS === 'web' && 'Notification' in window) {
             const perm = await Notification.requestPermission();
-            if (perm === 'granted') registrarSwYNotificarRider('Alertas en segundo plano activas', 'Recibirás notificaciones con sonido incluso con la pantalla apagada.');
+            if (perm === 'granted') {
+              await suscribirPushRider(rider.id);
+              registrarSwYNotificarRider('Alertas en segundo plano activas', 'Recibirás notificaciones con sonido incluso con la pantalla apagada.');
+            }
           }
         } catch (e) {}
       } else { detenerKeepAliveFondo(); detenerAlarma(); }
@@ -260,7 +263,7 @@ export default function App() {
           <TouchableOpacity style={[st.tab, tab === 'entregado' && st.tabAct]} onPress={() => setTab('entregado')}><Text style={st.txtTab}>ENTREGADO ({misEntregados.length})</Text></TouchableOpacity>
           <TouchableOpacity style={[st.tab, tab === 'ganancias' && st.tabAct]} onPress={() => setTab('ganancias')}><Text style={st.txtTab}>GANANCIAS</Text></TouchableOpacity>
         </View>
-                  {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
+            {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
           const dirInfo = separarDireccionYLink(p.direccion);
           return (
             <View key={p.id} style={st.card}>
@@ -360,3 +363,4 @@ const st = StyleSheet.create({
   cardTitulo: { color: '#F5B041', fontWeight: '900', fontSize: 15, marginBottom: 6 }, cardTxt: { color: '#DDD', fontSize: 13, marginBottom: 4 },
   detalle: { color: '#AAA', fontSize: 12, marginLeft: 8 }, monto: { color: '#4CAF50', fontSize: 28, fontWeight: '900', textAlign: 'center', marginVertical: 4 }
 });
+              
