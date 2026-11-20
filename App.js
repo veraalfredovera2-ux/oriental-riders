@@ -3,7 +3,11 @@ import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, Styl
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnvioRider, marcarRetiradoLocal, marcarEntregadoCliente } from './servicios';
 
-const LOGO_RIDER = require('./file_00000000ea0081f48c2e6662ba5fd06d.png');
+const LOGO_RIDER = { uri: [
+  'https://raw.' + '://githubusercontent.com',
+  'veraalfredovera2-ux/oriental-riders-/main/',
+  'file_00000000ea0081f48c2e6662ba5fd06d.png'
+].join('') };
 
 function generarWavDataUri(silencio = false) {
   const sr = 8000, dur = silencio ? 3 : 1.2, n = Math.floor(sr * dur);
@@ -256,7 +260,7 @@ export default function App() {
           <TouchableOpacity style={[st.tab, tab === 'entregado' && st.tabAct]} onPress={() => setTab('entregado')}><Text style={st.txtTab}>ENTREGADO ({misEntregados.length})</Text></TouchableOpacity>
           <TouchableOpacity style={[st.tab, tab === 'ganancias' && st.tabAct]} onPress={() => setTab('ganancias')}><Text style={st.txtTab}>GANANCIAS</Text></TouchableOpacity>
         </View>
-        {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
+                  {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
           const dirInfo = separarDireccionYLink(p.direccion);
           return (
             <View key={p.id} style={st.card}>
