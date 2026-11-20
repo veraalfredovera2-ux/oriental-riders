@@ -3,7 +3,9 @@ import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, Styl
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnvioRider, marcarRetiradoLocal, marcarEntregadoCliente } from './servicios';
 
-const LOGO_RIDER = require('./file_00000000ea0081f48c2e6662ba5fd06d.png');
+const LOGO_RIDER = { uri: '/file_00000000ea0081f48c2e6662ba5fd06d.png' };
+
+
 
 function generarWavDataUri(silencio = false) {
   const sr = 8000, dur = silencio ? 3 : 1.2, n = Math.floor(sr * dur);
