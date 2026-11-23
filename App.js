@@ -13,7 +13,7 @@ const TARJETA = '#121218';
 const BORDE = '#242430';
 const VERDE = '#16A34A';
 
-const LOGO_RIDER = require('./assets/logo-riders.png');
+const LOGO_RIDER = require('./file_00000000ea0081f48c2e66d2ba5fd06d.png');
 
 function seleccionarYComprimirAvatar() {
   return new Promise((resolve) => {
