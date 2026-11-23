@@ -1,366 +1,409 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Vibration, Platform, Linking, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, Image, Linking, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ingresarRider, actualizarEstadoRider, obtenerEnviosDelivery, aceptarEnvioRider, marcarRetiradoLocal, marcarEntregadoCliente, suscribirPushRider } from './servicios';
+import { ingresarRider, obtenerPedidosRider, marcarPedidoEnCamino, completarEntregaRider } from './servicios';
 
-const LOGO_RIDER = { uri: [
-  'https://raw.' + '://githubusercontent.com',
-  'veraalfredovera2-ux/oriental-riders-/main/',
-  'file_00000000ea0081f48c2e6662ba5fd06d.png'
-].join('') };
+const LOGO_RIDER = require('./file_00000000ea0081f48c2e66d2ba5fd06d.png');
+const FONDO = '#0A0A0C';
+const TARJETA = '#141418';
+const BORDE = '#26262E';
+const DORADO = '#FBBF24';
+const ROJO = '#DC2626';
+const VERDE = '#16A34A';
 
-function generarWavDataUri(silencio = false) {
-  const sr = 8000, dur = silencio ? 3 : 1.2, n = Math.floor(sr * dur);
-  const buf = new ArrayBuffer(44 + n * 2);
-  const v = new DataView(buf);
-  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
-  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  w(36, 'data'); v.setUint32(40, n * 2, true);
-  for (let i = 0; i < n; i++) {
-    const t = i / sr;
-    const freq = (Math.floor(t * 4) % 2 === 0) ? 1050 : 780;
-    const val = silencio ? 2 : Math.round(Math.sin(2 * Math.PI * freq * t) * 32000);
-    v.setInt16(44 + i * 2, val, true);
-  }
-  let bin = '';
-  const bytes = new Uint8Array(buf);
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes.at(i));
-  return 'data:audio/wav;base64,' + btoa(bin);
+if (Platform.OS === 'web' && typeof document !== 'undefined') {
+  document.documentElement.style.backgroundColor = FONDO;
+  document.body.style.backgroundColor = FONDO;
+  document.body.style.margin = '0';
 }
 
-async function registrarSwYNotificarRider(titulo, cuerpo) {
-  try {
-    if (Platform.OS !== 'web' || typeof window === 'undefined' || !('Notification' in window)) return;
-    if (Notification.permission !== 'granted') return;
-    const opciones = { body: cuerpo, vibrate: Array.of(600, 200, 600, 200, 800), tag: 'envio-rider-' + Date.now(), renotify: true, requireInteraction: true, silent: false };
-    if ('serviceWorker' in navigator) {
-      const reg = await navigator.serviceWorker.register('/sw.js');
-      await navigator.serviceWorker.ready;
-      if (reg && reg.showNotification) { await reg.showNotification(titulo, opciones); return; }
-    }
-    new Notification(titulo, opciones);
-  } catch (e) {}
+function seleccionarYComprimirAvatar() {
+  return new Promise((resolve) => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return resolve(null);
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.onchange = (e) => {
+      const file = e.target?.files?.item(0);
+      if (!file) return resolve(null);
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new window.Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const max = 260;
+          const scale = Math.min(max / img.width, max / img.height, 1);
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.8));
+        };
+        img.onerror = () => resolve(ev.target?.result || null);
+        img.src = ev.target?.result;
+      };
+      reader.readAsDataURL(file);
+    };
+    inp.click();
+  });
 }
 
-function separarDireccionYLink(direccion) {
-  const dir = String(direccion || '').trim();
-  const matchUrl = dir.match(/https?:\/\/[^\s|]+/i);
-  const url = matchUrl ? matchUrl.at(0) : '';
-  const textoLimpio = dir.replace(/\|?\s*https?:\/\/[^\s|]+/gi, '').trim();
-  return { textoLimpio: textoLimpio || (url ? 'Ubicación exacta Google Maps' : 'Sin dirección'), url };
+function obtenerRangoSemana(offsetSemanas = 0) {
+  const hoy = new Date();
+  const dia = hoy.getDay();
+  const diffLunes = (dia === 0 ? -6 : 1 - dia) + offsetSemanas * 7;
+  const inicio = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + diffLunes, 0, 0, 0);
+  const fin = new Date(inicio.getFullYear(), inicio.getMonth(), inicio.getDate() + 6, 23, 59, 59);
+  return { inicio, fin };
 }
 
+function obtenerRangoMes(offsetMeses = 0) {
+  const hoy = new Date();
+  const inicio = new Date(hoy.getFullYear(), hoy.getMonth() + offsetMeses, 1, 0, 0, 0);
+  const fin = new Date(hoy.getFullYear(), hoy.getMonth() + offsetMeses + 1, 0, 23, 59, 59);
+  return { inicio, fin };
+}
 export default function App() {
   const [rider, setRider] = useState(null);
-  const [tel, setTel] = useState('');
-  const [pass, setPass] = useState('');
+  const [fotoRider, setFotoRider] = useState(null);
+  const [telefono, setTelefono] = useState('');
+  const [password, setPassword] = useState('');
+  const [disponible, setDisponible] = useState(true);
   const [tab, setTab] = useState('recoger');
-  const [envios, setEnvios] = useState([]);
+  const [periodo, setPeriodo] = useState('esta_semana');
+  const [pedidos, setPedidos] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [aviso, setAviso] = useState(null);
-  const [sonando, setSonando] = useState(false);
-  const conocidosRef = useRef(null), audioSirenaRef = useRef(null), audioFondoRef = useRef(null), timeoutRef = useRef(null), wakeRef = useRef(null);
 
   useEffect(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      try {
-        if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-        const aSirena = new window.Audio(generarWavDataUri(false));
-        aSirena.loop = true;
-        audioSirenaRef.current = aSirena;
-        const aFondo = new window.Audio(generarWavDataUri(true));
-        aFondo.loop = true;
-        aFondo.volume = 0.02;
-        audioFondoRef.current = aFondo;
-      } catch (e) {}
-    }
-    AsyncStorage.getItem('sesion_oriental_rider').then(s => { if (s) setRider(JSON.parse(s)); });
+    AsyncStorage.getItem('sesion_oriental_rider').then(s => {
+      if (s) {
+        const p = JSON.parse(s);
+        setRider(p);
+        if (p?.id) AsyncStorage.getItem(`foto_rider_${p.id}`).then(f => { if (f) setFotoRider(f); });
+      }
+    });
   }, []);
 
   useEffect(() => {
     if (!rider?.id) return;
-    try { if (Platform.OS === 'web' && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {}
-    if (rider.disponible !== false) { activarWakeLock(); iniciarKeepAliveFondo(); suscribirPushRider(rider.id); } else { liberarWakeLock(); detenerKeepAliveFondo(); }
-    cargarEnvios();
-    const t = setInterval(cargarEnvios, 3000);
-    return () => { clearInterval(t); detenerAlarma(); liberarWakeLock(); detenerKeepAliveFondo(); };
-  }, [rider?.id, rider?.disponible]);
+    AsyncStorage.getItem(`foto_rider_${rider.id}`).then(f => { if (f) setFotoRider(f); });
+    cargarPedidos();
+    const t = setInterval(cargarPedidos, 5000);
+    return () => clearInterval(t);
+  }, [rider?.id]);
 
-  function iniciarKeepAliveFondo() {
+  async function cargarPedidos() {
+    if (!rider?.id) return;
     try {
-      if (audioFondoRef.current && audioFondoRef.current.paused) audioFondoRef.current.play().catch(() => {});
-      if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
-        navigator.mediaSession.metadata = new window.MediaMetadata({ title: 'Oriental Riders • Disponible', artist: 'Alertas Activas en Segundo Plano' });
-        navigator.mediaSession.playbackState = 'playing';
+      const res = await obtenerPedidosRider(rider.id);
+      setPedidos(res.pedidos || []);
+      if (res.perfil) {
+        setRider(res.perfil);
+        await AsyncStorage.setItem('sesion_oriental_rider', JSON.stringify(res.perfil));
       }
     } catch (e) {}
   }
-  function detenerKeepAliveFondo() {
-    try {
-      if (audioFondoRef.current) { audioFondoRef.current.pause(); audioFondoRef.current.currentTime = 0; }
-      if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
-    } catch (e) {}
-  }
-  async function activarWakeLock() { try { if (Platform.OS === 'web' && navigator?.wakeLock && !wakeRef.current) wakeRef.current = await navigator.wakeLock.request('screen'); } catch (e) {} }
-  function liberarWakeLock() { try { if (wakeRef.current) { wakeRef.current.release(); wakeRef.current = null; } } catch (e) {} }
 
-  function abrirEnMaps(direccion, distrito) {
-    const info = separarDireccionYLink(direccion);
-    const url = info.url || `https://google.com{encodeURIComponent([info.textoLimpio, distrito, 'Lima, Perú'].filter(Boolean).join(', '))}`;
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.location.assign(url);
-      return;
+  async function manejarLogin() {
+    setCargando(true);
+    try {
+      const perfil = await ingresarRider({ telefono, password });
+      setRider(perfil);
+      await AsyncStorage.setItem('sesion_oriental_rider', JSON.stringify(perfil));
+    } catch (e) {
+      setAviso({ titulo: 'Error al ingresar', mensaje: e.message });
+    } finally {
+      setCargando(false);
     }
-    Linking.openURL(url);
   }
-  function tocarPitidoPrueba() {
+
+  async function cambiarFotoRider() {
     try {
-      if (audioSirenaRef.current) {
-        audioSirenaRef.current.currentTime = 0;
-        audioSirenaRef.current.play().catch(() => {});
-        setTimeout(() => { if (!sonando && audioSirenaRef.current) { audioSirenaRef.current.pause(); audioSirenaRef.current.currentTime = 0; } }, 700);
-      }
-    } catch (e) {}
+      const dataUrl = await seleccionarYComprimirAvatar();
+      if (!dataUrl) return;
+      setFotoRider(dataUrl);
+      if (rider?.id) await AsyncStorage.setItem(`foto_rider_${rider.id}`, dataUrl);
+      setAviso({ titulo: 'Foto actualizada', mensaje: 'Tu foto de perfil se guardó correctamente.' });
+    } catch (e) {
+      setAviso({ titulo: 'Error', mensaje: 'Intenta con una foto más ligera.' });
+    }
   }
 
-  function detenerAlarma() {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = null;
-    try { if (audioSirenaRef.current) { audioSirenaRef.current.pause(); audioSirenaRef.current.currentTime = 0; } } catch (e) {}
-    setSonando(false);
-  }
-
-  function activarAlarma() {
-    detenerAlarma(); setSonando(true);
-    try { Vibration.vibrate(Array.of(600, 200, 600, 200, 800)); } catch (e) {}
-    try { if (audioSirenaRef.current) { audioSirenaRef.current.currentTime = 0; audioSirenaRef.current.play().catch(() => {}); } } catch (e) {}
-    timeoutRef.current = setTimeout(detenerAlarma, 15000);
-  }
-
-  async function cargarEnvios() {
-    try {
-      const lista = await obtenerEnviosDelivery();
-      setEnvios(lista || []);
-      const libres = (lista || []).filter(p => p.estado === 'Confirmado por local' && !p.rider_id);
-      if (conocidosRef.current === null) { conocidosRef.current = libres.map(p => p.id); return; }
-      const nuevos = libres.filter(p => !conocidosRef.current.includes(p.id));
-      if (nuevos.length > 0 && rider?.disponible !== false) {
-        activarAlarma();
-        const ult = nuevos.at(0);
-        const dirInfo = separarDireccionYLink(ult?.direccion);
-        registrarSwYNotificarRider(
-          `¡Nuevo Delivery ${ult?.numero_pedido || ''}!`,
-          `${ult?.distrito || ''} • ${dirInfo.textoLimpio} • Delivery: S/ ${Number(ult?.costo_delivery || 0).toFixed(2)}`
-        );
-      }
-      if (libres.length === 0) detenerAlarma();
-      conocidosRef.current = libres.map(p => p.id);
-    } catch (e) {}
-  }
-
-  async function entrar() {
-    if (!tel.trim() || !pass.trim()) return setAviso('Ingresa teléfono y contraseña.');
-    setCargando(true);
-    try {
-      const r = await ingresarRider({ telefono: tel, password: pass });
-      await AsyncStorage.setItem('sesion_oriental_rider', JSON.stringify(r));
-      try { if (Platform.OS === 'web' && 'Notification' in window && Notification.permission === 'default') await Notification.requestPermission(); } catch (e) {}
-      setRider(r); iniciarKeepAliveFondo(); tocarPitidoPrueba();
-    } catch (e) { setAviso(e.message); } finally { setCargando(false); }
-  }
-
-  async function alternarDisponible() {
-    try {
-      const nuevo = !rider.disponible;
-      await actualizarEstadoRider(rider.id, nuevo);
-      const act = { ...rider, disponible: nuevo };
-      setRider(act); await AsyncStorage.setItem('sesion_oriental_rider', JSON.stringify(act));
-      if (nuevo) {
-        iniciarKeepAliveFondo();
-        tocarPitidoPrueba();
-        try {
-          if (Platform.OS === 'web' && 'Notification' in window) {
-            const perm = await Notification.requestPermission();
-            if (perm === 'granted') {
-              await suscribirPushRider(rider.id);
-              registrarSwYNotificarRider('Alertas en segundo plano activas', 'Recibirás notificaciones con sonido incluso con la pantalla apagada.');
-            }
-          }
-        } catch (e) {}
-      } else { detenerKeepAliveFondo(); detenerAlarma(); }
-    } catch (e) { setAviso(e.message); }
-  }
-
-  async function tomarEnvio(ped) {
-    setCargando(true);
-    try { detenerAlarma(); await aceptarEnvioRider(ped, rider); await cargarEnvios(); setTab('en_camino'); setAviso('Pedido asignado. Retíralo en el local.'); }
-    catch (e) { await cargarEnvios(); setAviso(e.message); } finally { setCargando(false); }
-  }
-
-  async function retirarPedido(ped) {
-    setCargando(true);
-    try { await marcarRetiradoLocal(ped.id); await cargarEnvios(); setAviso('Pedido retirado. ¡Buen viaje!'); }
-    catch (e) { setAviso(e.message); } finally { setCargando(false); }
-  }
-
-  async function entregarPedido(ped) {
-    setCargando(true);
-    try { await marcarEntregadoCliente(ped); await cargarEnvios(); setTab('entregado'); setAviso('¡Entrega completada y ganancia acreditada!'); }
-    catch (e) { setAviso(e.message); } finally { setCargando(false); }
-  }
-
-  async function salir() {
+  async function cerrarSesion() {
     await AsyncStorage.removeItem('sesion_oriental_rider');
-    detenerKeepAliveFondo(); detenerAlarma(); setRider(null);
+    setRider(null);
+    setFotoRider(null);
+    setPedidos([]);
   }
-    if (!rider) {
+
+  function abrirMapaCliente(dir) {
+    const match = (dir || '').match(/https:\/\/www\.google\.com\/maps\?q=[^\s|]+/);
+    if (match) return Linking.openURL(match).catch(() => {});
+    const query = encodeURIComponent(dir || 'Lima, Peru');
+    Linking.openURL(`https://google.com{query}`).catch(() => {});
+  }
+    const modalAviso = aviso && (
+    <View style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center', padding: 20, zIndex: 999 }}>
+      <View style={{ width: '100%', maxWidth: 340, backgroundColor: TARJETA, borderWidth: 1.5, borderColor: DORADO, borderRadius: 16, padding: 18 }}>
+        <Text style={{ color: DORADO, fontSize: 16, fontWeight: '900', marginBottom: 6 }}>{aviso.titulo}</Text>
+        <Text style={{ color: '#E5E7EB', fontSize: 13, marginBottom: 14 }}>{aviso.mensaje}</Text>
+        <TouchableOpacity style={{ backgroundColor: DORADO, borderRadius: 10, paddingVertical: 10, alignItems: 'center' }} onPress={() => setAviso(null)}>
+          <Text style={{ color: '#000', fontWeight: '900', fontSize: 13 }}>Entendido</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (!rider) {
     return (
-      <SafeAreaView style={st.pantalla}>
-        <View style={st.cajaLogin}>
-          <Image source={LOGO_RIDER} style={st.logoImg} />
-          <Text style={st.logo}>ORIENTAL RIDERS</Text>
-          <Text style={st.sub}>App Oficial de Repartidores • Club Sazón</Text>
-          <TextInput style={st.input} placeholder="Teléfono del repartidor" placeholderTextColor="#777" keyboardType="phone-pad" value={tel} onChangeText={setTel} />
-          <TextInput style={st.input} placeholder="Contraseña" placeholderTextColor="#777" secureTextEntry value={pass} onChangeText={setPass} />
-          <TouchableOpacity style={st.btnOro} onPress={entrar} disabled={cargando}><Text style={st.txtOscuro}>{cargando ? 'INGRESANDO...' : 'INICIAR SESIÓN'}</Text></TouchableOpacity>
-          {aviso && <View style={st.alerta}><Text style={st.txtBlanco}>{aviso}</Text><TouchableOpacity onPress={() => setAviso(null)}><Text style={st.txtOro}>OK</Text></TouchableOpacity></View>}
+      <SafeAreaView style={{ flex: 1, backgroundColor: FONDO, justifyContent: 'center', padding: 22 }}>
+        {modalAviso}
+        <View style={{ alignItems: 'center', marginBottom: 24 }}>
+          <View style={{ width: 124, height: 124, borderRadius: 62, borderWidth: 2.5, borderColor: DORADO, overflow: 'hidden', backgroundColor: '#141418', marginBottom: 16 }}>
+            <Image source={LOGO_RIDER} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+          </View>
+          <Text style={{ color: DORADO, fontSize: 26, fontWeight: '900', letterSpacing: 1 }}>ORIENTAL RIDERS</Text>
+          <Text style={{ color: '#9CA3AF', fontSize: 13, marginTop: 4 }}>App Oficial de Repartidores • Club Sazón</Text>
         </View>
+
+        <TextInput
+          style={{ backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, borderRadius: 12, color: '#FFF', paddingHorizontal: 14, paddingVertical: 13, fontSize: 14, marginBottom: 12 }}
+          placeholder="Teléfono del repartidor"
+          placeholderTextColor="#6B7280"
+          keyboardType="phone-pad"
+          value={telefono}
+          onChangeText={setTelefono}
+        />
+        <TextInput
+          style={{ backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, borderRadius: 12, color: '#FFF', paddingHorizontal: 14, paddingVertical: 13, fontSize: 14, marginBottom: 16 }}
+          placeholder="Contraseña"
+          placeholderTextColor="#6B7280"
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+        />
+        <TouchableOpacity
+          style={{ backgroundColor: DORADO, borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+          onPress={manejarLogin}
+          disabled={cargando}
+        >
+          <Text style={{ color: '#000', fontSize: 15, fontWeight: '900' }}>{cargando ? 'INGRESANDO...' : 'INICIAR SESIÓN'}</Text>
+        </TouchableOpacity>
       </SafeAreaView>
     );
   }
 
-  const libres = envios.filter(p => p.estado === 'Confirmado por local' && !p.rider_id);
-  const misEnCamino = envios.filter(p => p.rider_id === rider.id && p.estado !== 'Completado' && p.estado !== 'Cancelado');
-  const misEntregados = envios.filter(p => p.rider_id === rider.id && p.estado === 'Completado');
-  const gananciaTotal = misEntregados.reduce((acc, p) => acc + Number(p.costo_delivery || 0), 0);
+  const activos = pedidos.filter(p => p.estado !== 'Completado' && p.estado !== 'Cancelado');
+  const entregados = pedidos.filter(p => p.estado === 'Completado');
+  const paraRecoger = activos.filter(p => p.estado === 'Pendiente');
+  const enCamino = activos.filter(p => p.estado !== 'Pendiente');
 
+  const rango = periodo === 'esta_semana'
+    ? obtenerRangoSemana(0)
+    : periodo === 'semana_pasada'
+      ? obtenerRangoSemana(-1)
+      : periodo === 'este_mes'
+        ? obtenerRangoMes(0)
+        : obtenerRangoMes(-1);
+
+  const filtrados = entregados.filter(p => {
+    const f = new Date(p.creado_en);
+    return f >= rango.inicio && f <= rango.fin;
+  });
+
+  const gananciaPeriodo = filtrados.reduce((acc, p) => acc + Number(p.costo_delivery || 0), 0);
+  const diasNombres = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  const resumenDias = {};
+  filtrados.forEach(p => {
+    const f = new Date(p.creado_en);
+    const key = f.toISOString().slice(0, 10);
+    const label = `${diasNombres[f.getDay()]} ${key.slice(8, 10)}/${key.slice(5, 7)}`;
+    if (!resumenDias[key]) resumenDias[key] = { label, count: 0, total: 0 };
+    resumenDias[key].count += 1;
+    resumenDias[key].total += Number(p.costo_delivery || 0);
+  });
   return (
-    <SafeAreaView style={st.pantalla}>
-      <ScrollView contentContainerStyle={{ padding: 16 }}>
-        <View style={st.fila}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-            <Image source={LOGO_RIDER} style={st.logoMini} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: FONDO }}>
+      {modalAviso}
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+            <TouchableOpacity
+              onPress={cambiarFotoRider}
+              style={{ width: 64, height: 64, borderRadius: 32, borderWidth: 2, borderColor: DORADO, overflow: 'hidden', backgroundColor: TARJETA, position: 'relative' }}
+            >
+              <Image source={fotoRider ? { uri: fotoRider } : LOGO_RIDER} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+              <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', paddingVertical: 1 }}>
+                <Text style={{ color: DORADO, fontSize: 9, fontWeight: '900' }}>📷 FOTO</Text>
+              </View>
+            </TouchableOpacity>
             <View style={{ flex: 1 }}>
-              <Text style={st.subIzq}>Repartidor • {misEntregados.length} entregados</Text>
-              <Text style={st.nombre}>{rider.nombre_completo}</Text>
+              <Text style={{ color: DORADO, fontSize: 12, fontWeight: '800' }}>Repartidor • {entregados.length} entregados</Text>
+              <Text style={{ color: '#FFF', fontSize: 21, fontWeight: '900' }} numberOfLines={1}>{rider.nombre_completo}</Text>
+              <TouchableOpacity onPress={cambiarFotoRider}>
+                <Text style={{ color: '#9CA3AF', fontSize: 11 }}>Toca tu círculo para subir foto</Text>
+              </TouchableOpacity>
             </View>
           </View>
-          <TouchableOpacity style={st.btnRojo} onPress={salir}><Text style={st.txtBlanco}>SALIR</Text></TouchableOpacity>
+          <TouchableOpacity onPress={cerrarSesion} style={{ backgroundColor: ROJO, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10 }}>
+            <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>SALIR</Text>
+          </TouchableOpacity>
         </View>
-        <View style={st.tarjetaHorario}>
-          <Text style={st.txtHorario}>Horario: {rider.hora_entrada || '18:30'} - {rider.hora_salida || '23:50'} • {rider.dias_libres || 'Sin días libres'}</Text>
+
+        <View style={{ backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 10, alignItems: 'center' }}>
+          <Text style={{ color: '#E5E7EB', fontSize: 12, fontWeight: '800' }}>
+            📅 Horario: {rider.direccion_predeterminada || 'Lun a Dom: 12:00 pm - 10:00 pm'}
+          </Text>
         </View>
-        <TouchableOpacity style={[st.btnEstado, { backgroundColor: rider.disponible ? '#2E7D32' : '#444' }]} onPress={alternarDisponible}>
-          <Text style={st.txtBlanco}>{rider.disponible ? '🟢 DISPONIBLE PARA REPARTOS' : '🔴 DESCONECTADO (TOCA PARA ACTIVAR)'}</Text>
+
+        <TouchableOpacity
+          onPress={() => setDisponible(!disponible)}
+          style={{ backgroundColor: disponible ? VERDE : '#374151', borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginBottom: 14 }}
+        >
+          <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '900' }}>
+            {disponible ? '🟢 DISPONIBLE PARA REPARTOS' : '⚫ NO DISPONIBLE (DESCANSO)'}
+          </Text>
         </TouchableOpacity>
-        {sonando && <TouchableOpacity style={st.bannerAlarma} onPress={detenerAlarma}><Text style={st.txtBlanco}>🚨 ¡NUEVO ENVÍO DISPONIBLE! (TOCA PARA SILENCIAR)</Text></TouchableOpacity>}
-        {aviso && <View style={st.alerta}><Text style={st.txtBlanco}>{aviso}</Text><TouchableOpacity onPress={() => setAviso(null)}><Text style={st.txtOro}>OK</Text></TouchableOpacity></View>}
-        <View style={st.tabs}>
-          <TouchableOpacity style={[st.tab, tab === 'recoger' && st.tabAct]} onPress={() => setTab('recoger')}><Text style={st.txtTab}>RECOGER ({libres.length})</Text></TouchableOpacity>
-          <TouchableOpacity style={[st.tab, tab === 'en_camino' && st.tabAct]} onPress={() => setTab('en_camino')}><Text style={st.txtTab}>EN CAMINO ({misEnCamino.length})</Text></TouchableOpacity>
-          <TouchableOpacity style={[st.tab, tab === 'entregado' && st.tabAct]} onPress={() => setTab('entregado')}><Text style={st.txtTab}>ENTREGADO ({misEntregados.length})</Text></TouchableOpacity>
-          <TouchableOpacity style={[st.tab, tab === 'ganancias' && st.tabAct]} onPress={() => setTab('ganancias')}><Text style={st.txtTab}>GANANCIAS</Text></TouchableOpacity>
-        </View>
-            {tab === 'recoger' && (libres.length === 0 ? <Text style={st.vacio}>No hay pedidos listos para recoger ahora.</Text> : libres.map(p => {
-          const dirInfo = separarDireccionYLink(p.direccion);
-          return (
-            <View key={p.id} style={st.card}>
-              <Text style={st.cardTitulo}>📦 Pedido {p.numero_pedido} • Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
-              <Text style={st.cardTxt}>📍 Distrito: {p.distrito || 'Sin distrito'}</Text>
-              <Text style={st.cardTxt}>🏠 Dirección: {dirInfo.textoLimpio}</Text>
-              <TouchableOpacity onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
-                <Text style={st.linkMaps}>🗺️ ABRIR UBICACIÓN EN GOOGLE MAPS</Text>
-              </TouchableOpacity>
-              <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo || 'Cliente'}</Text>
-              <Text style={st.cardTxt}>💵 Cobrar: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
-              <TouchableOpacity style={st.btnOro} onPress={() => tomarEnvio(p)} disabled={cargando}><Text style={st.txtOscuro}>ACEPTAR Y RECOGER PEDIDO</Text></TouchableOpacity>
-            </View>
-          );
-        }))}
 
-        {tab === 'en_camino' && (misEnCamino.length === 0 ? <Text style={st.vacio}>No tienes entregas en camino.</Text> : misEnCamino.map(p => {
-          const dirInfo = separarDireccionYLink(p.direccion);
-          const clienteYaRecibio = Boolean(p.recibido_cliente);
-          return (
-            <View key={p.id} style={st.card}>
-              <Text style={st.cardTitulo}>🛵 {p.numero_pedido} — {p.estado_rider || 'Asignado'}</Text>
-              <Text style={st.cardTxt}>📍 Distrito: {p.distrito || 'Sin distrito'}</Text>
-              <Text style={st.cardTxt}>🏠 Dirección: {dirInfo.textoLimpio}</Text>
-              <TouchableOpacity style={st.btnMaps} onPress={() => abrirEnMaps(p.direccion, p.distrito)}>
-                <Text style={st.txtBlanco}>🗺️ ABRIR EN GOOGLE MAPS</Text>
-              </TouchableOpacity>
-              <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo || 'Cliente'}</Text>
-              <Text style={st.cardTxt}>💵 Total: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
-              {!!p.notas && <Text style={[st.cardTxt, { color: '#F5B041' }]}>📝 Nota: {p.notas}</Text>}
-              {(p.pedido_detalles || []).map(d => <Text key={d.id} style={st.detalle}>• {d.cantidad}x {d.nombre_producto}</Text>)}
-              {p.estado_rider !== 'En camino a recoger' && (
-                <TouchableOpacity style={[st.btnOro, { backgroundColor: '#29B6F6' }]} onPress={() => retirarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>1. YA RETIRÉ EL PEDIDO DEL LOCAL</Text></TouchableOpacity>
-              )}
-              {clienteYaRecibio ? (
-                <TouchableOpacity style={[st.btnOro, { backgroundColor: '#4CAF50' }]} onPress={() => entregarPedido(p)} disabled={cargando}><Text style={st.txtOscuro}>2. ENTREGADO AL CLIENTE (ACREDITAR GANANCIA)</Text></TouchableOpacity>
-              ) : (
-                <View style={st.cajaEsperaCli}>
-                  <Text style={st.txtEsperaCli}>⏳ Esperando que el cliente pulse "YA RECIBÍ MI PEDIDO" en su app para habilitar el botón Entregado.</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+          {[
+            { id: 'recoger', label: `RECOGER (${paraRecoger.length})` },
+            { id: 'camino', label: `EN CAMINO (${enCamino.length})` },
+            { id: 'entregado', label: `ENTREGADO (${entregados.length})` },
+            { id: 'ganancias', label: 'GANANCIAS' }
+          ].map(t => (
+            <TouchableOpacity
+              key={t.id}
+              onPress={() => setTab(t.id)}
+              style={{
+                backgroundColor: TARJETA,
+                borderWidth: 1.5,
+                borderColor: tab === t.id ? DORADO : BORDE,
+                borderRadius: 10,
+                paddingVertical: 9,
+                paddingHorizontal: 13,
+                marginRight: 8
+              }}
+            >
+              <Text style={{ color: tab === t.id ? DORADO : '#E5E7EB', fontSize: 11, fontWeight: '900' }}>{t.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+                    {(tab === 'recoger' || tab === 'camino') && (
+          <View>
+            {(tab === 'recoger' ? paraRecoger : enCamino).length === 0 ? (
+              <Text style={{ color: '#9CA3AF', fontSize: 14, textAlign: 'center', marginTop: 24 }}>
+                {tab === 'recoger' ? 'No hay pedidos listos para recoger ahora.' : 'No tienes pedidos en camino en este momento.'}
+              </Text>
+            ) : (
+              (tab === 'recoger' ? paraRecoger : enCamino).map(p => (
+                <View key={p.id} style={{ backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, borderRadius: 14, padding: 14, marginBottom: 12 }}>
+                  <Text style={{ color: DORADO, fontSize: 15, fontWeight: '900' }}>{p.numero_pedido} • {p.perfiles?.nombre_completo || 'Cliente'}</Text>
+                  <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 3 }}>📱 Teléfono: {p.perfiles?.telefono || 'Sin teléfono'}</Text>
+                  <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '700', marginTop: 4 }}>📍 {p.distrito} - {p.direccion}</Text>
+                  <Text style={{ color: DORADO, fontSize: 13, fontWeight: '900', marginTop: 6 }}>
+                    Cobrar: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago}) • Tu ganancia: S/ {Number(p.costo_delivery || 0).toFixed(2)}
+                  </Text>
+                  <TouchableOpacity style={{ backgroundColor: '#1E293B', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 10 }} onPress={() => abrirMapaCliente(p.direccion)}>
+                    <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>🗺️ VER RUTA EN GOOGLE MAPS</Text>
+                  </TouchableOpacity>
+                  {p.estado === 'Pendiente' ? (
+                    <TouchableOpacity
+                      style={{ backgroundColor: DORADO, borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 8 }}
+                      onPress={async () => { await marcarPedidoEnCamino(p.id); await cargarPedidos(); setTab('camino'); }}
+                    >
+                      <Text style={{ color: '#000', fontSize: 12, fontWeight: '900' }}>🛵 CONFIRMAR RECOJO Y SALIR</Text>
+                    </TouchableOpacity>
+                  ) : p.recibido_cliente ? (
+                    <TouchableOpacity
+                      style={{ backgroundColor: VERDE, borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 }}
+                      onPress={async () => {
+                        try {
+                          await completarEntregaRider(p);
+                          await cargarPedidos();
+                          setAviso({ titulo: '¡Entrega completada!', mensaje: `Ganancia sumada: +S/ ${Number(p.costo_delivery || 0).toFixed(2)}` });
+                        } catch (e) { setAviso({ titulo: 'Aviso', mensaje: e.message }); }
+                      }}
+                    >
+                      <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>✅ MARCAR PEDIDO ENTREGADO</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={{ backgroundColor: '#261B0A', borderWidth: 1, borderColor: DORADO, borderRadius: 10, padding: 10, marginTop: 8 }}>
+                      <Text style={{ color: DORADO, fontSize: 11, fontWeight: '900', textAlign: 'center' }}>
+                        ⏳ Esperando que el cliente pulse "PEDIDO RECIBIDO" en su app para finalizar
+                      </Text>
+                    </View>
+                  )}
                 </View>
-              )}
-            </View>
-          );
-        }))}
+              ))
+            )}
+          </View>
+        )}
 
-        {tab === 'entregado' && (misEntregados.length === 0 ? <Text style={st.vacio}>Aún no tienes pedidos entregados confirmados.</Text> : misEntregados.map(p => {
-          const dirInfo = separarDireccionYLink(p.direccion);
-          return (
-            <View key={p.id} style={st.card}>
-              <Text style={st.cardTitulo}>✅ Pedido {p.numero_pedido} — COMPLETADO</Text>
-              <Text style={st.cardTxt}>📍 {p.distrito || ''} • {dirInfo.textoLimpio}</Text>
-              <Text style={st.cardTxt}>👤 Cliente: {p.clientes?.nombre_completo || 'Cliente'}</Text>
-              <Text style={[st.cardTxt, { color: '#4CAF50', fontWeight: '800' }]}>💰 Ganancia Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
-            </View>
-          );
-        }))}
+        {tab === 'entregado' && (
+          <View>
+            {entregados.length === 0 ? (
+              <Text style={{ color: '#9CA3AF', fontSize: 14, textAlign: 'center', marginTop: 24 }}>Aún no tienes pedidos entregados.</Text>
+            ) : (
+              entregados.map(p => (
+                <View key={p.id} style={{ backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+                  <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '900' }}>{p.numero_pedido} • {p.perfiles?.nombre_completo || 'Cliente'}</Text>
+                  <Text style={{ color: '#9CA3AF', fontSize: 12 }}>{p.distrito} - {p.direccion}</Text>
+                  <Text style={{ color: '#22C55E', fontSize: 13, fontWeight: '900', marginTop: 4 }}>✅ Entregado • Ganancia: +S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
+                </View>
+              ))
+            )}
+          </View>
+        )}
 
         {tab === 'ganancias' && (
           <View>
-            <View style={st.card}>
-              <Text style={st.sub}>GANANCIAS CONFIRMADAS EN DELIVERIES</Text>
-              <Text style={st.monto}>S/ {gananciaTotal.toFixed(2)}</Text>
-              <Text style={st.sub}>Total entregados confirmados: {misEntregados.length} pedidos</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+              {[
+                { id: 'esta_semana', label: 'Esta semana' },
+                { id: 'semana_pasada', label: 'Semana pasada' },
+                { id: 'este_mes', label: 'Este mes' },
+                { id: 'mes_pasado', label: 'Mes pasado' }
+              ].map(pr => (
+                <TouchableOpacity
+                  key={pr.id}
+                  onPress={() => setPeriodo(pr.id)}
+                  style={{ backgroundColor: periodo === pr.id ? DORADO : TARJETA, borderWidth: 1, borderColor: periodo === pr.id ? DORADO : BORDE, borderRadius: 20, paddingVertical: 7, paddingHorizontal: 14, marginRight: 8 }}
+                >
+                  <Text style={{ color: periodo === pr.id ? '#000' : '#FFF', fontSize: 11, fontWeight: '900' }}>{pr.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+              <View style={{ flex: 1, backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, borderRadius: 14, padding: 14, alignItems: 'center' }}>
+                <Text style={{ color: '#9CA3AF', fontSize: 10, fontWeight: '800' }}>ENTREGAS</Text>
+                <Text style={{ color: '#FFF', fontSize: 22, fontWeight: '900', marginTop: 2 }}>{filtrados.length}</Text>
+              </View>
+              <View style={{ flex: 1, backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, borderRadius: 14, padding: 14, alignItems: 'center' }}>
+                <Text style={{ color: '#9CA3AF', fontSize: 10, fontWeight: '800' }}>GANANCIA TOTAL</Text>
+                <Text style={{ color: DORADO, fontSize: 22, fontWeight: '900', marginTop: 2 }}>S/ {gananciaPeriodo.toFixed(2)}</Text>
+              </View>
             </View>
-            {misEntregados.map(p => <View key={p.id} style={st.card}><Text style={st.cardTitulo}>✅ {p.numero_pedido} - {p.distrito}</Text><Text style={st.cardTxt}>Delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text></View>)}
+
+            <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '900', marginBottom: 8 }}>Desglose guardado por día:</Text>
+            {Object.keys(resumenDias).length === 0 ? (
+              <Text style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center', marginTop: 12 }}>Sin ganancias registradas en este periodo.</Text>
+            ) : (
+              Object.keys(resumenDias).sort().reverse().map(k => (
+                <View key={k} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, borderRadius: 12, padding: 12, marginBottom: 8 }}>
+                  <View>
+                    <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '900' }}>{resumenDias[k].label}</Text>
+                    <Text style={{ color: '#9CA3AF', fontSize: 12 }}>{resumenDias[k].count} pedidos entregados</Text>
+                  </View>
+                  <Text style={{ color: '#22C55E', fontSize: 15, fontWeight: '900' }}>+ S/ {resumenDias[k].total.toFixed(2)}</Text>
+                </View>
+              ))
+            )}
           </View>
         )}
       </ScrollView>
     </SafeAreaView>
   );
-}
-
-const st = StyleSheet.create({
-  pantalla: { flex: 1, backgroundColor: '#0A0A0A' }, cajaLogin: { flex: 1, justifyContent: 'center', padding: 24 },
-  logoImg: { width: 120, height: 120, borderRadius: 60, alignSelf: 'center', marginBottom: 12, borderWidth: 2, borderColor: '#F5B041' },
-  logoMini: { width: 46, height: 46, borderRadius: 23, borderWidth: 1.5, borderColor: '#F5B041' },
-  logo: { color: '#F5B041', fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 4 },
-  sub: { color: '#AAA', fontSize: 13, textAlign: 'center', marginBottom: 12 }, subIzq: { color: '#F5B041', fontSize: 11, fontWeight: '800' },
-  tarjetaHorario: { backgroundColor: '#161616', borderWidth: 1, borderColor: '#2E2E2E', borderRadius: 8, padding: 8, marginTop: 10 },
-  txtHorario: { color: '#DDD', fontSize: 12, fontWeight: '700', textAlign: 'center' },
-  input: { backgroundColor: '#181818', color: '#FFF', borderWidth: 1, borderColor: '#333', borderRadius: 10, padding: 14, marginBottom: 12 },
-  btnOro: { backgroundColor: '#F5B041', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
-  btnRojo: { backgroundColor: '#B71C1C', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
-  btnMaps: { backgroundColor: '#1565C0', padding: 12, borderRadius: 8, alignItems: 'center', marginVertical: 8 },
-  linkMaps: { color: '#4FC3F7', fontSize: 13, fontWeight: '800', textDecorationLine: 'underline', marginVertical: 6 },
-  btnEstado: { padding: 14, borderRadius: 10, alignItems: 'center', marginVertical: 10 },
-  cajaEsperaCli: { backgroundColor: '#0E2433', borderWidth: 1, borderColor: '#29B6F6', padding: 10, borderRadius: 8, marginTop: 8 },
-  txtEsperaCli: { color: '#29B6F6', fontSize: 12, fontWeight: '800', textAlign: 'center' },
-  txtOscuro: { color: '#0A0A0A', fontWeight: '900', fontSize: 13 }, txtBlanco: { color: '#FFF', fontWeight: '900', fontSize: 12 }, txtOro: { color: '#F5B041', fontWeight: '900' },
-  alerta: { backgroundColor: '#222', borderWidth: 1, borderColor: '#F5B041', padding: 12, borderRadius: 10, flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 },
-  bannerAlarma: { backgroundColor: '#D32F2F', padding: 14, borderRadius: 10, alignItems: 'center', marginBottom: 10 },
-  fila: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, nombre: { color: '#FFF', fontSize: 19, fontWeight: '900' },
-  tabs: { flexDirection: 'row', gap: 4, marginBottom: 14 }, tab: { flex: 1, backgroundColor: '#181818', paddingVertical: 10, paddingHorizontal: 2, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#2A2A2A' },
-  tabAct: { borderColor: '#F5B041', backgroundColor: '#261E0D' }, txtTab: { color: '#FFF', fontSize: 9, fontWeight: '900' },
-  vacio: { color: '#777', textAlign: 'center', marginTop: 30 },
-  card: { backgroundColor: '#151515', borderWidth: 1, borderColor: '#2A2A2A', borderRadius: 12, padding: 14, marginBottom: 12 },
-  cardTitulo: { color: '#F5B041', fontWeight: '900', fontSize: 15, marginBottom: 6 }, cardTxt: { color: '#DDD', fontSize: 13, marginBottom: 4 },
-  detalle: { color: '#AAA', fontSize: 12, marginLeft: 8 }, monto: { color: '#4CAF50', fontSize: 28, fontWeight: '900', textAlign: 'center', marginVertical: 4 }
-});
-              
+                      }
+          
