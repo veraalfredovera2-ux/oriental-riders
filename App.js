@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, Image, Linking, Platform } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, Image, Linking, Vibration, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   ingresarRider, obtenerPedidosRider, aceptarPedidoDisponibleRider,
-  marcarPedidoRecogidoRider, completarEntregaRider
+  marcarPedidoRecogidoRider, notificarLlegadaPuertaRider, completarEntregaRider
 } from './servicios';
 
 const ROJO = '#E50914';
@@ -14,6 +14,34 @@ const BORDE = '#242430';
 const VERDE = '#16A34A';
 
 const LOGO_RIDER = require('./file_00000000ea0081f48c2e66d2ba5fd06d.png');
+
+function reproducirTimbreRider() {
+  try {
+    if (Platform.OS !== 'web') {
+      Vibration.vibrate();
+      return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate();
+    }
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const ahora = ctx.currentTime;
+    [987.77, 1318.51].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, ahora + i * 0.16);
+      gain.gain.setValueAtTime(0.24, ahora + i * 0.16);
+      gain.gain.exponentialRampToValueAtTime(0.001, ahora + i * 0.16 + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ahora + i * 0.16);
+      osc.stop(ahora + i * 0.16 + 0.36);
+    });
+  } catch (e) {}
+}
 
 function seleccionarYComprimirAvatar() {
   return new Promise((resolve) => {
@@ -72,6 +100,8 @@ export default function App() {
   const [periodo, setPeriodo] = useState('esta_semana');
   const [cargando, setCargando] = useState(false);
   const [aviso, setAviso] = useState(null);
+  const [confirmacion, setConfirmacion] = useState(null);
+  const conteoListosRef = useRef(null);
 
   useEffect(() => {
     AsyncStorage.getItem('sesion_oriental_rider').then(s => {
@@ -92,6 +122,14 @@ export default function App() {
     const t = setInterval(cargarPedidos, 4000);
     return () => clearInterval(t);
   }, [rider?.id]);
+
+  useEffect(() => {
+    const cant = (disponiblesListos || []).length;
+    if (conteoListosRef.current !== null && cant > conteoListosRef.current && disponible) {
+      reproducirTimbreRider();
+    }
+    conteoListosRef.current = cant;
+  }, [disponiblesListos, disponible]);
 
   async function cambiarFotoRider() {
     try {
@@ -139,17 +177,53 @@ export default function App() {
       : `https://google.com/search/?api=1&query=${encodeURIComponent(txt)}`;
     Linking.openURL(url);
   }
-    const modalAviso = aviso ? (
-    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center', padding: 20, zIndex: 999 }}>
-      <View style={{ width: '100%', maxWidth: 340, backgroundColor: TARJETA, borderWidth: 1.5, borderColor: ROJO, borderRadius: 16, padding: 18 }}>
-        <Text style={{ color: '#FFF', fontSize: 17, fontWeight: '900', textAlign: 'center', marginBottom: 6 }}>{aviso.titulo}</Text>
-        <Text style={{ color: '#D1D5DB', fontSize: 14, textAlign: 'center', marginBottom: 14 }}>{aviso.mensaje}</Text>
-        <TouchableOpacity onPress={() => setAviso(null)} style={{ backgroundColor: ROJO, borderRadius: 10, paddingVertical: 11, alignItems: 'center' }}>
-          <Text style={{ color: '#FFF', fontWeight: '900' }}>Entendido</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  ) : null;
+
+  function abrirWhatsAppCliente(p) {
+    const tel = String(p.perfiles?.telefono || '').replace(/\D/g, '');
+    if (!tel) return setAviso({ titulo: 'Sin teléfono', mensaje: 'Este cliente no tiene teléfono registrado.' });
+    const telFinal = tel.length === 9 ? `51${tel}` : tel;
+    const msg = encodeURIComponent(`Hola ${p.perfiles?.nombre_completo || ''}, soy ${rider?.nombre_completo || 'tu repartidor'} de El Sazón Oriental 🛵. Ya estoy en la puerta con tu pedido ${p.numero_pedido}.`);
+    Linking.openURL(`https://wa.me{telFinal}?text=${msg}`);
+  }
+    const modalAviso = (
+    <>
+      {aviso && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center', padding: 20, zIndex: 999 }}>
+          <View style={{ width: '100%', maxWidth: 340, backgroundColor: TARJETA, borderWidth: 1.5, borderColor: ROJO, borderRadius: 16, padding: 18 }}>
+            <Text style={{ color: '#FFF', fontSize: 17, fontWeight: '900', textAlign: 'center', marginBottom: 6 }}>{aviso.titulo}</Text>
+            <Text style={{ color: '#D1D5DB', fontSize: 14, textAlign: 'center', marginBottom: 14 }}>{aviso.mensaje}</Text>
+            <TouchableOpacity onPress={() => setAviso(null)} style={{ backgroundColor: ROJO, borderRadius: 10, paddingVertical: 11, alignItems: 'center' }}>
+              <Text style={{ color: '#FFF', fontWeight: '900' }}>Entendido</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+      {confirmacion && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.84)', justifyContent: 'center', alignItems: 'center', padding: 20, zIndex: 1000 }}>
+          <View style={{ width: '100%', maxWidth: 350, backgroundColor: TARJETA, borderWidth: 1.5, borderColor: DORADO, borderRadius: 16, padding: 20 }}>
+            <Text style={{ color: DORADO, fontSize: 11, fontWeight: '900', textAlign: 'center', letterSpacing: 1, marginBottom: 4 }}>CONFIRMAR ACCIÓN</Text>
+            <Text style={{ color: '#FFF', fontSize: 17, fontWeight: '900', textAlign: 'center', marginBottom: 8 }}>{confirmacion.titulo}</Text>
+            <Text style={{ color: '#D1D5DB', fontSize: 14, textAlign: 'center', marginBottom: 18 }}>{confirmacion.mensaje}</Text>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity onPress={() => setConfirmacion(null)} style={{ flex: 1, backgroundColor: '#252530', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}>
+                <Text style={{ color: '#D1D5DB', fontWeight: '800' }}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  const fn = confirmacion.onConfirmar;
+                  setConfirmacion(null);
+                  if (fn) fn();
+                }}
+                style={{ flex: 1, backgroundColor: ROJO, borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
+              >
+                <Text style={{ color: '#FFF', fontWeight: '900' }}>Confirmar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+    </>
+  );
 
   if (!rider) {
     return (
@@ -185,6 +259,9 @@ export default function App() {
 
   const enRuta = (pedidos || []).filter(p => p.estado !== 'Completado' && p.estado !== 'Cancelado');
   const entregados = (pedidos || []).filter(p => p.estado === 'Completado');
+  const efectivoPorRendir = entregados
+    .filter(p => p.metodo_pago === 'Efectivo' && p.estado_rider !== 'Liquidado en caja')
+    .reduce((acc, p) => acc + Number(p.total || 0), 0);
 
   const rango = periodo === 'esta_semana' ? obtenerRangoSemana(0)
     : periodo === 'semana_pasada' ? obtenerRangoSemana(-1)
@@ -207,12 +284,20 @@ export default function App() {
     resumenDias[clave].count += 1;
     resumenDias[clave].total += Number(p.costo_delivery || 0);
   });
-            return (
+                                        return (
     <SafeAreaView style={{ flex: 1, backgroundColor: FONDO }}>
       {modalAviso}
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <View style={{ width: 42 }} />
+          <TouchableOpacity
+            onPress={() => {
+              reproducirTimbreRider();
+              setAviso({ titulo: 'Audio verificado', mensaje: 'El timbre sonará automáticamente cuando cocina publique un pedido listo.' });
+            }}
+            style={{ backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 12 }}
+          >
+            <Text style={{ color: DORADO, fontSize: 11, fontWeight: '900' }}>🔔 Timbre</Text>
+          </TouchableOpacity>
           <Image source={LOGO_RIDER} style={{ width: 58, height: 58, borderRadius: 29 }} resizeMode="cover" />
           <TouchableOpacity onPress={cargarPedidos} style={{ backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '900' }}>↻</Text>
@@ -244,6 +329,16 @@ export default function App() {
           </View>
         </View>
 
+        {efectivoPorRendir > 0 && (
+          <View style={{ backgroundColor: '#261B0A', borderWidth: 1.5, borderColor: DORADO, borderRadius: 14, padding: 12, marginBottom: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: DORADO, fontSize: 12, fontWeight: '900' }}>💵 EFECTIVO POR RENDIR AL LOCAL</Text>
+              <Text style={{ color: '#D1D5DB', fontSize: 11 }}>Entrega este monto en caja para liquidar tu saldo.</Text>
+            </View>
+            <Text style={{ color: '#FFF', fontSize: 18, fontWeight: '900' }}>S/ {efectivoPorRendir.toFixed(2)}</Text>
+          </View>
+        )}
+
         <TouchableOpacity
           onPress={() => setDisponible(!disponible)}
           style={{ backgroundColor: disponible ? VERDE : '#374151', borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginBottom: 16 }}
@@ -272,13 +367,17 @@ export default function App() {
                   </Text>
                   <TouchableOpacity
                     style={{ backgroundColor: VERDE, borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 }}
-                    onPress={async () => {
-                      try {
-                        await aceptarPedidoDisponibleRider(p.id, rider);
-                        await cargarPedidos();
-                        setAviso({ titulo: '¡Pedido aceptado!', mensaje: 'Ahora dirígete al local y pulsa "MARCAR COMO RECOGIDO" al salir.' });
-                      } catch (e) { setAviso({ titulo: 'Aviso', mensaje: e.message }); }
-                    }}
+                    onPress={() => setConfirmacion({
+                      titulo: 'Confirmar asignación de reparto',
+                      mensaje: `¿Confirmas que aceptarás el pedido ${p.numero_pedido} para recogerlo en el local?`,
+                      onConfirmar: async () => {
+                        try {
+                          await aceptarPedidoDisponibleRider(p.id, rider);
+                          await cargarPedidos();
+                          setAviso({ titulo: 'Pedido asignado', mensaje: 'Dirígete al local y confirma cuando lo hayas recogido.' });
+                        } catch (e) { setAviso({ titulo: 'Aviso', mensaje: e.message }); }
+                      }
+                    })}
                   >
                     <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '900' }}>🙋‍♂️ ACEPTAR ESTE PEDIDO</Text>
                   </TouchableOpacity>
@@ -301,42 +400,79 @@ export default function App() {
               <Text style={{ color: DORADO, fontSize: 13, fontWeight: '900', marginTop: 6 }}>
                 Cobrar: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago}) • Tu ganancia: S/ {Number(p.costo_delivery || 0).toFixed(2)}
               </Text>
-              <TouchableOpacity style={{ backgroundColor: '#1E293B', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 10 }} onPress={() => abrirMapaCliente(p.direccion)}>
-                <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>🗺️ ABRIR RUTA EN GOOGLE MAPS</Text>
-              </TouchableOpacity>
+
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                <TouchableOpacity style={{ flex: 1, backgroundColor: '#1E293B', borderRadius: 10, paddingVertical: 11, alignItems: 'center' }} onPress={() => abrirMapaCliente(p.direccion)}>
+                  <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '900' }}>🗺️ GOOGLE MAPS</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{ flex: 1, backgroundColor: '#075E54', borderRadius: 10, paddingVertical: 11, alignItems: 'center' }} onPress={() => abrirWhatsAppCliente(p)}>
+                  <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '900' }}>💬 WHATSAPP</Text>
+                </TouchableOpacity>
+              </View>
 
               {p.estado !== 'En camino' ? (
                 <TouchableOpacity
                   style={{ backgroundColor: DORADO, borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 }}
-                  onPress={async () => {
-                    try {
-                      await marcarPedidoRecogidoRider(p.id);
-                      await cargarPedidos();
-                      setAviso({ titulo: 'Pedido recogido', mensaje: 'Se notificó al cliente que su pedido va en camino.' });
-                    } catch (e) { setAviso({ titulo: 'Aviso', mensaje: e.message }); }
-                  }}
+                  onPress={() => setConfirmacion({
+                    titulo: 'Confirmar pedido recogido',
+                    mensaje: `¿Confirmas que ya recogiste el pedido ${p.numero_pedido} en el local e inicias la ruta de entrega?`,
+                    onConfirmar: async () => {
+                      try {
+                        await marcarPedidoRecogidoRider(p.id);
+                        await cargarPedidos();
+                        setAviso({ titulo: 'En camino', mensaje: 'Se notificó al cliente que su pedido va en ruta.' });
+                      } catch (e) { setAviso({ titulo: 'Aviso', mensaje: e.message }); }
+                    }
+                  })}
                 >
                   <Text style={{ color: '#000', fontSize: 12, fontWeight: '900' }}>🛵 MARCAR COMO RECOGIDO (EN CAMINO)</Text>
                 </TouchableOpacity>
-              ) : p.recibido_cliente ? (
-                <TouchableOpacity
-                  style={{ backgroundColor: VERDE, borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 }}
-                  onPress={async () => {
-                    try {
-                      await completarEntregaRider(p);
-                      await cargarPedidos();
-                      setAviso({ titulo: '¡Entrega completada!', mensaje: `Se sumó +S/ ${Number(p.costo_delivery || 0).toFixed(2)} a tus ganancias.` });
-                    } catch (e) { setAviso({ titulo: 'Aviso', mensaje: e.message }); }
-                  }}
-                >
-                  <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>✅ ENTREGADO (SUMAR GANANCIA)</Text>
-                </TouchableOpacity>
               ) : (
-                <View style={{ backgroundColor: '#261B0A', borderWidth: 1, borderColor: DORADO, borderRadius: 10, padding: 10, marginTop: 8 }}>
-                  <Text style={{ color: DORADO, fontSize: 11, fontWeight: '900', textAlign: 'center' }}>
-                    ⏳ Esperando que el cliente pulse "PEDIDO RECIBIDO" en su app para habilitar el botón ENTREGADO
-                  </Text>
-                </View>
+                <>
+                  {p.estado_rider !== 'En la puerta' && p.recibido_cliente !== true && (
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#0284C7', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 }}
+                      onPress={() => setConfirmacion({
+                        titulo: 'Confirmar llegada al domicilio',
+                        mensaje: `¿Confirmas que te encuentras en la puerta del domicilio del pedido ${p.numero_pedido}? Se enviará una alerta sonora al cliente.`,
+                        onConfirmar: async () => {
+                          try {
+                            await notificarLlegadaPuertaRider(p.id);
+                            await cargarPedidos();
+                            setAviso({ titulo: 'Cliente notificado', mensaje: 'Se envió la alerta de llegada al cliente.' });
+                          } catch (e) { setAviso({ titulo: 'Aviso', mensaje: e.message }); }
+                        }
+                      })}
+                    >
+                      <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>🚪 ESTOY EN LA PUERTA (AVISAR CLIENTE)</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {p.recibido_cliente === true ? (
+                    <TouchableOpacity
+                      style={{ backgroundColor: VERDE, borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 }}
+                      onPress={() => setConfirmacion({
+                        titulo: 'Confirmar entrega completada',
+                        mensaje: `¿Confirmas el cierre de entrega del pedido ${p.numero_pedido} y el registro de tu ganancia?`,
+                        onConfirmar: async () => {
+                          try {
+                            await completarEntregaRider(p);
+                            await cargarPedidos();
+                            setAviso({ titulo: 'Entrega completada', mensaje: `Se sumó +S/ ${Number(p.costo_delivery || 0).toFixed(2)} a tus ganancias.` });
+                          } catch (e) { setAviso({ titulo: 'Aviso', mensaje: e.message }); }
+                        }
+                      })}
+                    >
+                      <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>✅ ENTREGADO (SUMAR GANANCIA)</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={{ backgroundColor: '#261B0A', borderWidth: 1, borderColor: DORADO, borderRadius: 10, padding: 10, marginTop: 8 }}>
+                      <Text style={{ color: DORADO, fontSize: 11, fontWeight: '900', textAlign: 'center' }}>
+                        🔒 Bloqueado por seguridad: espera a que el cliente pulse "PEDIDO RECIBIDO" en su app para habilitar ENTREGADO
+                      </Text>
+                    </View>
+                  )}
+                </>
               )}
             </View>
           ))
@@ -394,4 +530,4 @@ export default function App() {
       </ScrollView>
     </SafeAreaView>
   );
-          }
+}
