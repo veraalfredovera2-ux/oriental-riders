@@ -62,6 +62,20 @@ async function apiRest(ruta, metodo = 'GET', cuerpo = null) {
   if (!res.ok) throw new Error(datos.message || datos.error || 'Error en servidor');
   return datos;
 }
+
+async function obtenerBonoPuntosRider() {
+  try {
+    const res = await apiRest('configuracion_pagos?select=titular&limit=1');
+    const raw = (Array.isArray(res) && res.length > 0 ? res.at(0)?.titular : '') || '';
+    const partes = String(raw).split('||DEL:');
+    if (partes.length < 2) return 10;
+    const nums = partes.at(1).split('|');
+    const val = nums.at(5) !== undefined ? Number(nums.at(5)) : 10;
+    return Number.isFinite(val) && val >= 0 ? val : 10;
+  } catch (e) {
+    return 10;
+  }
+}
 export default function App() {
   const [rider, setRider] = useState(null);
   const [tel, setTel] = useState('');
@@ -167,6 +181,24 @@ export default function App() {
           estado_rider: 'Entregado',
           estado: 'Completado'
         });
+        const bonoPts = await obtenerBonoPuntosRider();
+        if (bonoPts > 0) {
+          const perfilAct = await apiRest(`perfiles?select=puntos&id=eq.${rider.id}&limit=1`);
+          const ptsActuales = Number((Array.isArray(perfilAct) && perfilAct.at(0)?.puntos) || rider.puntos || 0);
+          const nuevosPts = ptsActuales + bonoPts;
+          await apiRest(`perfiles?id=eq.${rider.id}`, 'PATCH', { puntos: nuevosPts });
+          await apiRest('historial_puntos', 'POST', {
+            usuario_id: rider.id,
+            cantidad: bonoPts,
+            descripcion: `Bono +${bonoPts} pts por entrega ${ped.numero_pedido}`
+          });
+          const riderAct = { ...rider, puntos: nuevosPts };
+          setRider(riderAct);
+          await AsyncStorage.setItem('sesion_oriental_riders', JSON.stringify(riderAct));
+          alert(`¡Entrega finalizada! Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)} y +${bonoPts} puntos Club Sazón.`);
+        } else {
+          alert(`¡Entrega finalizada! Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)}.`);
+        }
       }
       await cargarPedidos();
     } catch (e) {
@@ -198,7 +230,7 @@ export default function App() {
     const baseWa = 'https://wa.me';
     Linking.openURL(`${baseWa}${telFinal}?text=${msg}`);
   }
-      if (!rider) {
+    if (!rider) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: FONDO, justifyContent: 'center', padding: 22 }}>
         <View style={{ alignItems: 'center', marginBottom: 24 }}>
@@ -249,7 +281,7 @@ export default function App() {
             <Image source={LOGO_RIDERS} style={{ width: 42, height: 42, borderRadius: 10 }} />
             <View>
               <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 15 }}>{rider.nombre_completo}</Text>
-              <Text style={{ color: DORADO, fontSize: 11, fontWeight: '800' }}>🛵 Motorizado Activo</Text>
+              <Text style={{ color: DORADO, fontSize: 11, fontWeight: '800' }}>🛵 Motorizado • {rider.puntos || 0} pts</Text>
             </View>
           </View>
           <TouchableOpacity onPress={cerrarSesion} style={{ backgroundColor: '#252530', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}>
@@ -262,22 +294,25 @@ export default function App() {
           <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '900', marginTop: 2 }}>{rider.direccion_predeterminada || 'Lun a Dom: 12:00 pm - 10:00 pm'}</Text>
         </View>
 
-        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 14 }}>
-          {[
-            { id: 'disponibles', label: `Disponibles (${disponibles.length})` },
-            { id: 'encurso', label: `En ruta (${enCurso.length})` },
-            { id: 'ganancias', label: 'Mis Pagos' }
-          ].map(t => (
-            <TouchableOpacity
-              key={t.id}
-              style={{ flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: tab === t.id ? ROJO : TARJETA, borderWidth: 1, borderColor: tab === t.id ? ROJO : BORDE }}
-              onPress={() => setTab(t.id)}
-            >
-              <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 12 }}>{t.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-                                                     {tab === 'disponibles' && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            {[
+              { id: 'disponibles', label: `Disponibles (${disponibles.length})` },
+              { id: 'encurso', label: `En ruta (${enCurso.length})` },
+              { id: 'ganancias', label: 'Mis Pagos' },
+              { id: 'historial', label: `Historial (${entregados.length})` }
+            ].map(t => (
+              <TouchableOpacity
+                key={t.id}
+                style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: tab === t.id ? ROJO : TARJETA, borderWidth: 1, borderColor: tab === t.id ? ROJO : BORDE }}
+                onPress={() => setTab(t.id)}
+              >
+                <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 12 }}>{t.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+          {tab === 'disponibles' && (
           <View>
             {disponibles.length === 0 ? (
               <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: BORDE }}>
@@ -374,8 +409,37 @@ export default function App() {
             </View>
           </View>
         )}
+
+        {tab === 'historial' && (
+          <View>
+            <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '900', marginBottom: 10 }}>HISTORIAL DE ENTREGAS ({entregados.length})</Text>
+            {entregados.length === 0 ? (
+              <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: BORDE }}>
+                <Text style={{ color: '#9CA3AF', fontSize: 14 }}>Aún no tienes entregas completadas.</Text>
+              </View>
+            ) : (
+              entregados.map(p => (
+                <View key={p.id} style={{ backgroundColor: TARJETA, borderRadius: 12, padding: 13, marginBottom: 10, borderWidth: 1, borderColor: BORDE }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 14 }}>{p.numero_pedido} • {p.perfiles?.nombre_completo || 'Cliente'}</Text>
+                    <Text style={{ color: '#22C55E', fontWeight: '900', fontSize: 14 }}>+S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
+                  </View>
+                  <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 3 }}>{new Date(p.creado_en).toLocaleString()} • {p.metodo_pago}</Text>
+                  <Text style={{ color: '#D1D5DB', fontSize: 12, marginTop: 3 }}>Destino: {p.distrito} - {String(p.direccion || '').split('|').at(0)}</Text>
+                  {p.metodo_pago === 'Efectivo' && (
+                    <Text style={{ color: p.estado_rider === 'Liquidado en caja' ? '#22C55E' : ROJO, fontSize: 11, fontWeight: '800', marginTop: 5 }}>
+                      {p.estado_rider === 'Liquidado en caja'
+                        ? `✅ Efectivo S/ ${Number(p.total || 0).toFixed(2)} liquidado en caja`
+                        : `⏳ Efectivo S/ ${Number(p.total || 0).toFixed(2)} pendiente de rendir`}
+                    </Text>
+                  )}
+                </View>
+              ))
+            )}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
-                                                       }
-                    
+            }
+                                   
