@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SUPABASE_URL = 'https://' + 'pripxtsriyxhafevokjg' + '.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ShY2V3Oh7gB4ZHSBzI5o_Q_GSMxzmds';
-const LOGO_RIDERS = require('./assets/logo-riders.png');
+const LOGO_RIDERS = require('./file_00000000ea0081f48c2e66d2ba5fd06d.png');
 
 const ROJO = '#E50914';
 const DORADO = '#FBBF24';
