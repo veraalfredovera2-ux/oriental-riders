@@ -188,7 +188,7 @@ export default function App() {
           const nuevosPts = ptsActuales + bonoPts;
           await apiRest(`perfiles?id=eq.${rider.id}`, 'PATCH', { puntos: nuevosPts });
           await apiRest('historial_puntos', 'POST', {
-            usuario_id: rider.id,
+            perfil_id: rider.id,
             cantidad: bonoPts,
             descripcion: `Bono +${bonoPts} pts por entrega ${ped.numero_pedido}`
           });
