@@ -133,8 +133,8 @@ export default function App() {
       await apiRest(`pedidos?id=eq.${ped.id}`, 'PATCH', {
         rider_id: rider.id,
         rider_nombre: rider.nombre_completo,
-        estado_rider: 'En camino',
-        estado: 'En camino'
+        estado_rider: 'Recogiendo en local',
+        estado: 'Listo'
       });
       await cargarPedidos();
       setTab('encurso');
@@ -148,8 +148,15 @@ export default function App() {
   async function actualizarPasoRider(ped, paso) {
     setCargando(true);
     try {
-      if (paso === 'En la puerta') {
-        await apiRest(`pedidos?id=eq.${ped.id}`, 'PATCH', { estado_rider: 'En la puerta' });
+      if (paso === 'En camino') {
+        await apiRest(`pedidos?id=eq.${ped.id}`, 'PATCH', {
+          estado_rider: 'En camino',
+          estado: 'En camino'
+        });
+      } else if (paso === 'En la puerta') {
+        await apiRest(`pedidos?id=eq.${ped.id}`, 'PATCH', {
+          estado_rider: 'En la puerta'
+        });
       } else if (paso === 'Entregado') {
         if (!ped.recibido_cliente) {
           alert('El cliente aún no ha confirmado "Pedido Recibido" en su app Club Sazón. Pídele que pulse el botón verde en su pantalla.');
@@ -191,7 +198,7 @@ export default function App() {
     const baseWa = 'https://wa.me';
     Linking.openURL(`${baseWa}${telFinal}?text=${msg}`);
   }
-    if (!rider) {
+      if (!rider) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: FONDO, justifyContent: 'center', padding: 22 }}>
         <View style={{ alignItems: 'center', marginBottom: 24 }}>
@@ -270,7 +277,7 @@ export default function App() {
             </TouchableOpacity>
           ))}
         </View>
-        {tab === 'disponibles' && (
+                                                     {tab === 'disponibles' && (
           <View>
             {disponibles.length === 0 ? (
               <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: BORDE }}>
@@ -318,16 +325,32 @@ export default function App() {
                       <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 12 }}>💬 WHATSAPP</Text>
                     </TouchableOpacity>
                   </View>
-                  {p.estado_rider !== 'En la puerta' && (
-                    <TouchableOpacity style={{ backgroundColor: '#D97706', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 8 }} onPress={() => actualizarPasoRider(p, 'En la puerta')}>
-                      <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>🔔 ESTOY EN LA PUERTA (TIMBRAR CLIENTE)</Text>
+
+                  {p.estado_rider === 'Recogiendo en local' && (
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#2563EB', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 8 }}
+                      onPress={() => actualizarPasoRider(p, 'En camino')}
+                    >
+                      <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>📦 CONFIRMAR RECOGIDA (EN CAMINO)</Text>
                     </TouchableOpacity>
                   )}
+
+                  {p.estado_rider === 'En camino' && (
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#D97706', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 8 }}
+                      onPress={() => actualizarPasoRider(p, 'En la puerta')}
+                    >
+                      <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>🔔 ESTOY AQUÍ (EN LA PUERTA)</Text>
+                    </TouchableOpacity>
+                  )}
+
                   <TouchableOpacity
                     style={{ backgroundColor: p.recibido_cliente ? '#16A34A' : '#374151', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 }}
                     onPress={() => actualizarPasoRider(p, 'Entregado')}
                   >
-                    <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>✅ FINALIZAR ENTREGA</Text>
+                    <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>
+                      {p.recibido_cliente ? '✅ FINALIZAR ENTREGA (SUMAR GANANCIA)' : '🔒 BLOQUEADO HASTA CONFIRMACIÓN DEL CLIENTE'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               ))
@@ -354,4 +377,5 @@ export default function App() {
       </ScrollView>
     </SafeAreaView>
   );
-}
+                                                       }
+                    
