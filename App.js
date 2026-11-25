@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SafeAreaView, View, Text, ScrollView, TouchableOpacity, TextInput, Image, Platform, Linking, Vibration } from 'react-native';
+import { SafeAreaView, View, Text, ScrollView, TouchableOpacity, TextInput, Image, Platform, Linking, Vibration, Modal } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SUPABASE_URL = 'https://' + 'pripxtsriyxhafevokjg' + '.supabase.co';
@@ -76,6 +76,23 @@ async function obtenerBonoPuntosRider() {
     return 10;
   }
 }
+
+function VentanaAvisoRider({ aviso, onCerrar }) {
+  return (
+    <Modal transparent animationType="fade" visible={Boolean(aviso)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+        <View style={{ width: '100%', maxWidth: 360, backgroundColor: TARJETA, borderRadius: 18, borderWidth: 1.5, borderColor: DORADO, padding: 20, alignItems: 'center' }}>
+          <Image source={LOGO_RIDERS} style={{ width: 52, height: 52, borderRadius: 12, marginBottom: 10 }} />
+          <Text style={{ color: DORADO, fontWeight: '900', fontSize: 17, textAlign: 'center', marginBottom: 6 }}>{aviso?.titulo}</Text>
+          <Text style={{ color: '#E5E7EB', fontSize: 13, textAlign: 'center', lineHeight: 19, marginBottom: 16 }}>{aviso?.mensaje}</Text>
+          <TouchableOpacity style={{ width: '100%', backgroundColor: ROJO, borderRadius: 12, paddingVertical: 12, alignItems: 'center' }} onPress={onCerrar}>
+            <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 14 }}>ENTENDIDO</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
 export default function App() {
   const [rider, setRider] = useState(null);
   const [tel, setTel] = useState('');
@@ -83,7 +100,10 @@ export default function App() {
   const [tab, setTab] = useState('disponibles');
   const [pedidos, setPedidos] = useState([]);
   const [cargando, setCargando] = useState(false);
+  const [aviso, setAviso] = useState(null);
   const idsDisponiblesRef = useRef(null);
+
+  const mostrarAviso = (titulo, mensaje) => setAviso({ titulo, mensaje });
 
   useEffect(() => {
     AsyncStorage.getItem('sesion_oriental_riders').then(s => {
@@ -118,7 +138,7 @@ export default function App() {
 
   async function iniciarSesion() {
     const t = limpiarTel(tel);
-    if (t.length < 6 || !pass.trim()) return alert('Ingresa teléfono y contraseña.');
+    if (t.length < 6 || !pass.trim()) return mostrarAviso('Datos incompletos', 'Ingresa teléfono y contraseña.');
     setCargando(true);
     try {
       const res = await apiRest(`perfiles?select=*&telefono=eq.${t}&limit=1`);
@@ -130,7 +150,7 @@ export default function App() {
       await AsyncStorage.setItem('sesion_oriental_riders', JSON.stringify(p));
       sonarAlertaRider();
     } catch (e) {
-      alert(e.message);
+      mostrarAviso('No se pudo ingresar', e.message);
     } finally {
       setCargando(false);
     }
@@ -152,8 +172,9 @@ export default function App() {
       });
       await cargarPedidos();
       setTab('encurso');
+      mostrarAviso('Pedido aceptado', `Ve al local a recoger el pedido ${ped.numero_pedido}.`);
     } catch (e) {
-      alert(e.message);
+      mostrarAviso('Error', e.message);
     } finally {
       setCargando(false);
     }
@@ -167,13 +188,15 @@ export default function App() {
           estado_rider: 'En camino',
           estado: 'En camino'
         });
+        mostrarAviso('En camino', 'Se notificó al cliente que vas en camino con su pedido.');
       } else if (paso === 'En la puerta') {
         await apiRest(`pedidos?id=eq.${ped.id}`, 'PATCH', {
           estado_rider: 'En la puerta'
         });
+        mostrarAviso('Cliente notificado', 'Se envió una alerta avisando que ya estás en la puerta.');
       } else if (paso === 'Entregado') {
         if (!ped.recibido_cliente) {
-          alert('El cliente aún no ha confirmado "Pedido Recibido" en su app Club Sazón. Pídele que pulse el botón verde en su pantalla.');
+          mostrarAviso('Falta confirmación del cliente', 'El cliente aún no ha confirmado "Pedido Recibido" en su app Club Sazón. Pídele que pulse el botón verde en su pantalla.');
           setCargando(false);
           return;
         }
@@ -195,14 +218,14 @@ export default function App() {
           const riderAct = { ...rider, puntos: nuevosPts };
           setRider(riderAct);
           await AsyncStorage.setItem('sesion_oriental_riders', JSON.stringify(riderAct));
-          alert(`¡Entrega finalizada! Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)} y +${bonoPts} puntos Club Sazón.`);
+          mostrarAviso('¡Entrega finalizada!', `Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)} y +${bonoPts} puntos Club Sazón.`);
         } else {
-          alert(`¡Entrega finalizada! Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)}.`);
+          mostrarAviso('¡Entrega finalizada!', `Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)}.`);
         }
       }
       await cargarPedidos();
     } catch (e) {
-      alert(e.message);
+      mostrarAviso('Error', e.message);
     } finally {
       setCargando(false);
     }
@@ -222,7 +245,7 @@ export default function App() {
 
   function contactarClienteWhatsApp(ped) {
     const telCli = String(ped.perfiles?.telefono || '').replace(/\D/g, '');
-    if (!telCli) return alert('El cliente no tiene un teléfono registrado.');
+    if (!telCli) return mostrarAviso('Sin teléfono', 'El cliente no tiene un teléfono registrado.');
     const telFinal = telCli.length === 9 ? '51' + telCli : telCli;
     const msg = encodeURIComponent(
       `Hola ${ped.perfiles?.nombre_completo || ''}, soy ${rider.nombre_completo}, tu repartidor de El Sazón Oriental. Ya estoy en camino / en la puerta con tu pedido ${ped.numero_pedido}.`
@@ -233,6 +256,7 @@ export default function App() {
     if (!rider) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: FONDO, justifyContent: 'center', padding: 22 }}>
+        <VentanaAvisoRider aviso={aviso} onCerrar={() => setAviso(null)} />
         <View style={{ alignItems: 'center', marginBottom: 24 }}>
           <Image source={LOGO_RIDERS} style={{ width: 130, height: 130, borderRadius: 24, marginBottom: 12 }} resizeMode="contain" />
           <Text style={{ color: '#FFF', fontSize: 22, fontWeight: '900', letterSpacing: 1 }}>ORIENTAL RIDERS</Text>
@@ -275,6 +299,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: FONDO }}>
+      <VentanaAvisoRider aviso={aviso} onCerrar={() => setAviso(null)} />
       <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 34 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, borderBottomWidth: 1, borderBottomColor: BORDE, paddingBottom: 10 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -294,25 +319,23 @@ export default function App() {
           <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '900', marginTop: 2 }}>{rider.direccion_predeterminada || 'Lun a Dom: 12:00 pm - 10:00 pm'}</Text>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
-          <View style={{ flexDirection: 'row', gap: 6 }}>
-            {[
-              { id: 'disponibles', label: `Disponibles (${disponibles.length})` },
-              { id: 'encurso', label: `En ruta (${enCurso.length})` },
-              { id: 'ganancias', label: 'Mis Pagos' },
-              { id: 'historial', label: `Historial (${entregados.length})` }
-            ].map(t => (
-              <TouchableOpacity
-                key={t.id}
-                style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: tab === t.id ? ROJO : TARJETA, borderWidth: 1, borderColor: tab === t.id ? ROJO : BORDE }}
-                onPress={() => setTab(t.id)}
-              >
-                <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 12 }}>{t.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, marginBottom: 14 }} contentContainerStyle={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+          {[
+            { id: 'disponibles', label: `Disponibles (${disponibles.length})` },
+            { id: 'encurso', label: `En ruta (${enCurso.length})` },
+            { id: 'ganancias', label: 'Mis Pagos' },
+            { id: 'historial', label: `Historial (${entregados.length})` }
+          ].map(t => (
+            <TouchableOpacity
+              key={t.id}
+              style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: tab === t.id ? ROJO : TARJETA, borderWidth: 1, borderColor: tab === t.id ? ROJO : BORDE }}
+              onPress={() => setTab(t.id)}
+            >
+              <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 12 }}>{t.label}</Text>
+            </TouchableOpacity>
+          ))}
         </ScrollView>
-          {tab === 'disponibles' && (
+        {tab === 'disponibles' && (
           <View>
             {disponibles.length === 0 ? (
               <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: BORDE }}>
@@ -441,5 +464,5 @@ export default function App() {
       </ScrollView>
     </SafeAreaView>
   );
-            }
-                                   
+          }
+          
