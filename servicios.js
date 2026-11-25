@@ -9,7 +9,6 @@ const limpiarTel = (t) => {
 async function apiRest(ruta, metodo = 'GET', cuerpo = null) {
   const op = {
     method: metodo,
-    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
       apikey: SUPABASE_KEY,
@@ -26,8 +25,12 @@ async function apiRest(ruta, metodo = 'GET', cuerpo = null) {
   return datos;
 }
 
-export async function ingresarRider({ telefono, password }) {
-  const tel = limpiarTel(telefono);
+export async function ingresarRider(arg1, arg2) {
+  const datos = typeof arg1 === 'object' && arg1 !== null
+    ? arg1
+    : { telefono: arg1, password: arg2 };
+  const tel = limpiarTel(datos.telefono);
+  const password = datos.password;
   const res = await apiRest(`perfiles?select=*&telefono=eq.${tel}&rol=eq.repartidor&limit=1`);
   const perfil = Array.isArray(res) && res.length > 0 ? res.at(0) : null;
   if (!perfil) throw new Error('Repartidor no encontrado. Verifica tu teléfono.');
