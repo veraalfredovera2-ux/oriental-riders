@@ -5,6 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./file_00000000ea0081f48c2e66d2ba5fd06d.png",
+    "splash": {
+      "image": "./file_00000000ea0081f48c2e66d2ba5fd06d.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#070709"
+    },
     "android": {
       "package": "com.elsazonoriental.riders",
       "versionCode": 1,
