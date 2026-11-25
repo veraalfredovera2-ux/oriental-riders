@@ -20,10 +20,10 @@ const limpiarTel = (t) => {
 function sonarAlertaRider() {
   try {
     if (Platform.OS !== 'web') {
-      Vibration.vibrate();
+      Vibration.vibrate([0, 400, 150, 400]);
       return;
     }
-    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate();
+    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([400, 150, 400]);
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return;
     const ctx = new AudioCtx();
@@ -46,7 +46,6 @@ function sonarAlertaRider() {
 async function apiRest(ruta, metodo = 'GET', cuerpo = null) {
   const op = {
     method: metodo,
-    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
       apikey: SUPABASE_KEY,
@@ -66,7 +65,7 @@ async function apiRest(ruta, metodo = 'GET', cuerpo = null) {
 async function obtenerBonoPuntosRider() {
   try {
     const res = await apiRest('configuracion_pagos?select=titular&limit=1');
-    const raw = (Array.isArray(res) && res.length > 0 ? res.at(0)?.titular : '') || '';
+    const raw = (Array.isArray(res) && res.length > 0 ? res.at(0).titular : '') || '';
     const partes = String(raw).split('||DEL:');
     if (partes.length < 2) return 10;
     const nums = partes.at(1).split('|');
@@ -106,7 +105,7 @@ export default function App() {
   const mostrarAviso = (titulo, mensaje) => setAviso({ titulo, mensaje });
 
   useEffect(() => {
-    AsyncStorage.getItem('sesion_oriental_riders').then(s => {
+    AsyncStorage.getItem('session_oriental_riders').then(s => {
       if (s) setRider(JSON.parse(s));
     });
   }, []);
@@ -147,7 +146,7 @@ export default function App() {
       if (p.rol !== 'repartidor') throw new Error('Esta cuenta no tiene rol de repartidor.');
       if (String(p.password_hash || '') !== pass.trim()) throw new Error('Contraseña incorrecta.');
       setRider(p);
-      await AsyncStorage.setItem('sesion_oriental_riders', JSON.stringify(p));
+      await AsyncStorage.setItem('session_oriental_riders', JSON.stringify(p));
       sonarAlertaRider();
     } catch (e) {
       mostrarAviso('No se pudo ingresar', e.message);
@@ -157,7 +156,7 @@ export default function App() {
   }
 
   async function cerrarSesion() {
-    await AsyncStorage.removeItem('sesion_oriental_riders');
+    await AsyncStorage.removeItem('session_oriental_riders');
     setRider(null);
   }
 
@@ -217,10 +216,10 @@ export default function App() {
           });
           const riderAct = { ...rider, puntos: nuevosPts };
           setRider(riderAct);
-          await AsyncStorage.setItem('sesion_oriental_riders', JSON.stringify(riderAct));
-          mostrarAviso('¡Entrega finalizada!', `Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)} y +${bonoPts} puntos Club Sazón.`);
+          await AsyncStorage.setItem('session_oriental_riders', JSON.stringify(riderAct));
+          mostrarAviso('Entrega finalizada!', `Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)} y +${bonoPts} puntos Club Sazón.`);
         } else {
-          mostrarAviso('¡Entrega finalizada!', `Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)}.`);
+          mostrarAviso('Entrega finalizada!', `Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)}.`);
         }
       }
       await cargarPedidos();
@@ -230,16 +229,14 @@ export default function App() {
       setCargando(false);
     }
   }
-
-  function abrirMapaRuta(ped) {
+    function abrirMapaRuta(ped) {
     const partes = String(ped.direccion || '').split('|');
     const linkMaps = partes.length > 1 ? partes.at(1).trim() : '';
     if (linkMaps.startsWith('http')) {
       Linking.openURL(linkMaps);
     } else {
       const q = encodeURIComponent(`${partes.at(0) || ''} ${ped.distrito || ''}`.trim());
-      const mapsBase = 'https://google.com';
-      Linking.openURL(`${mapsBase}${q}`);
+      Linking.openURL(`https://google.com{q}`);
     }
   }
 
@@ -250,10 +247,10 @@ export default function App() {
     const msg = encodeURIComponent(
       `Hola ${ped.perfiles?.nombre_completo || ''}, soy ${rider.nombre_completo}, tu repartidor de El Sazón Oriental. Ya estoy en camino / en la puerta con tu pedido ${ped.numero_pedido}.`
     );
-    const baseWa = 'https://wa.me';
-    Linking.openURL(`${baseWa}${telFinal}?text=${msg}`);
+    Linking.openURL(`https://wa.me{telFinal}?text=${msg}`);
   }
-    if (!rider) {
+
+  if (!rider) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: FONDO, justifyContent: 'center', padding: 22 }}>
         <VentanaAvisoRider aviso={aviso} onCerrar={() => setAviso(null)} />
@@ -315,11 +312,11 @@ export default function App() {
         </View>
 
         <View style={{ backgroundColor: TARJETA, borderWidth: 1.5, borderColor: DORADO, borderRadius: 14, padding: 12, marginBottom: 14 }}>
-          <Text style={{ color: '#9CA3AF', fontSize: 11, fontWeight: '800' }}>HORARIO DE TRABAJO ASIGNADO:</Text>
-          <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '900', marginTop: 2 }}>{rider.direccion_predeterminada || 'Lun a Dom: 12:00 pm - 10:00 pm'}</Text>
+          <Text style={{ color: '#9CA3AF', fontSize: 11, fontWeight: '800' }}>HORARIO DE TRABAJO ASIGNADO</Text>
+          <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '900', marginTop: 2 }}>{rider.direccion_predeterminada || 'Lun a Dom: 12:00 pm - 10:00 pm'}</Text>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, marginBottom: 14 }} contentContainerStyle={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, marginBottom: 14 }} contentContainerStyle={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
           {[
             { id: 'disponibles', label: `Disponibles (${disponibles.length})` },
             { id: 'encurso', label: `En ruta (${enCurso.length})` },
@@ -335,6 +332,7 @@ export default function App() {
             </TouchableOpacity>
           ))}
         </ScrollView>
+
         {tab === 'disponibles' && (
           <View>
             {disponibles.length === 0 ? (
@@ -356,8 +354,7 @@ export default function App() {
             )}
           </View>
         )}
-
-        {tab === 'encurso' && (
+                    {tab === 'encurso' && (
           <View>
             {enCurso.length === 0 ? (
               <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: BORDE }}>
@@ -368,9 +365,9 @@ export default function App() {
                 <View key={p.id} style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1.5, borderColor: ROJO }}>
                   <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 16 }}>{p.numero_pedido} • {p.perfiles?.nombre_completo || 'Cliente'}</Text>
                   <Text style={{ color: '#D1D5DB', fontSize: 13, marginTop: 4 }}>Tel: {p.perfiles?.telefono || 'No registrado'}</Text>
-                  <Text style={{ color: '#D1D5DB', fontSize: 13 }}>Dir: {p.distrito} - {String(p.direccion || '').split('|').at(0)}</Text>
+                  <Text style={{ color: '#D1D5DB', fontSize: 13, marginTop: 2 }}>Dir: {p.distrito} - {String(p.direccion || '').split('|').at(0)}</Text>
                   <Text style={{ color: DORADO, fontWeight: '800', fontSize: 13, marginTop: 4 }}>
-                    {p.metodo_pago === 'Efectivo' ? `💵 COBRAR EN EFECTIVO: S/ ${Number(p.total || 0).toFixed(2)}` : `✅ PAGADO CON ${p.metodo_pago.toUpperCase()} (NO COBRAR)`}
+                    {p.metodo_pago === 'Efectivo' ? `💵 COBRAR EN EFECTIVO: S/ ${Number(p.total || 0).toFixed(2)}` : `✅ PAGADO CON ${String(p.metodo_pago || '').toUpperCase()} (NO COBRAR)`}
                   </Text>
                   <Text style={{ color: p.recibido_cliente ? '#22C55E' : '#F59E0B', fontWeight: '900', fontSize: 12, marginTop: 6 }}>
                     {p.recibido_cliente ? '✅ Cliente ya confirmó recepción en su app' : '⏳ Esperando que el cliente confirme recepción en su app'}
@@ -383,25 +380,16 @@ export default function App() {
                       <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 12 }}>💬 WHATSAPP</Text>
                     </TouchableOpacity>
                   </View>
-
                   {p.estado_rider === 'Recogiendo en local' && (
-                    <TouchableOpacity
-                      style={{ backgroundColor: '#2563EB', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 8 }}
-                      onPress={() => actualizarPasoRider(p, 'En camino')}
-                    >
-                      <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>📦 CONFIRMAR RECOGIDA (EN CAMINO)</Text>
+                    <TouchableOpacity style={{ backgroundColor: '#2563EB', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 8 }} onPress={() => actualizarPasoRider(p, 'En camino')}>
+                      <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>🛵 CONFIRMAR RECOGIDA (EN CAMINO)</Text>
                     </TouchableOpacity>
                   )}
-
                   {p.estado_rider === 'En camino' && (
-                    <TouchableOpacity
-                      style={{ backgroundColor: '#D97706', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 8 }}
-                      onPress={() => actualizarPasoRider(p, 'En la puerta')}
-                    >
+                    <TouchableOpacity style={{ backgroundColor: '#D97706', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 8 }} onPress={() => actualizarPasoRider(p, 'En la puerta')}>
                       <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>🔔 ESTOY AQUÍ (EN LA PUERTA)</Text>
                     </TouchableOpacity>
                   )}
-
                   <TouchableOpacity
                     style={{ backgroundColor: p.recibido_cliente ? '#16A34A' : '#374151', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 }}
                     onPress={() => actualizarPasoRider(p, 'Entregado')}
@@ -425,7 +413,7 @@ export default function App() {
             </View>
             <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 16, borderWidth: 1.5, borderColor: efectivoPendienteCaja > 0 ? ROJO : BORDE }}>
               <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '800' }}>EFECTIVO COBRADO POR RENDIR A CAJA</Text>
-              <Text style={{ color: efectivoPendienteCaja > 0 ? ROJO : '#22C55E', fontSize: 26, fontWeight: '900', marginTop: 4 }}>S/ {efectivoPendienteCaja.toFixed(2)}</Text>
+              <Text style={{ color: efectivoPendienteCaja > 0 ? '#F87171' : '#22C55E', fontSize: 26, fontWeight: '900', marginTop: 4 }}>S/ {efectivoPendienteCaja.toFixed(2)}</Text>
               <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 4 }}>
                 {efectivoPendienteCaja > 0 ? 'Entrega este monto en caja al finalizar tu turno.' : 'No tienes efectivo pendiente por rendir.'}
               </Text>
@@ -442,7 +430,7 @@ export default function App() {
               </View>
             ) : (
               entregados.map(p => (
-                <View key={p.id} style={{ backgroundColor: TARJETA, borderRadius: 12, padding: 13, marginBottom: 10, borderWidth: 1, borderColor: BORDE }}>
+                <View key={p.id} style={{ backgroundColor: TARJETA, borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: BORDE }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 14 }}>{p.numero_pedido} • {p.perfiles?.nombre_completo || 'Cliente'}</Text>
                     <Text style={{ color: '#22C55E', fontWeight: '900', fontSize: 14 }}>+S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
@@ -453,7 +441,7 @@ export default function App() {
                     <Text style={{ color: p.estado_rider === 'Liquidado en caja' ? '#22C55E' : ROJO, fontSize: 11, fontWeight: '800', marginTop: 5 }}>
                       {p.estado_rider === 'Liquidado en caja'
                         ? `✅ Efectivo S/ ${Number(p.total || 0).toFixed(2)} liquidado en caja`
-                        : `⏳ Efectivo S/ ${Number(p.total || 0).toFixed(2)} pendiente de rendir`}
+                        : `⚠️ Efectivo S/ ${Number(p.total || 0).toFixed(2)} pendiente de rendir`}
                     </Text>
                   )}
                 </View>
@@ -464,5 +452,5 @@ export default function App() {
       </ScrollView>
     </SafeAreaView>
   );
-          }
-          
+                      }
+             
