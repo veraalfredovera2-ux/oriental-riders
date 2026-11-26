@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SafeAreaView, View, Text, ScrollView, TouchableOpacity, TextInput, Image, Platform, Linking, Vibration, Modal } from 'react-native';
+import { SafeAreaView, View, Text, ScrollView, TouchableOpacity, TextInput, Image, Platform, Linking, Vibration, Modal, StatusBar } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SUPABASE_URL = 'https://' + 'pripxtsriyxhafevokjg' + '.supabase.co';
@@ -20,15 +20,15 @@ const limpiarTel = (t) => {
 function sonarAlertaRider() {
   try {
     if (Platform.OS !== 'web') {
-      Vibration.vibrate([0, 400, 150, 400]);
+      Vibration.vibrate(new Array(0, 350, 150, 350, 150, 450));
       return;
     }
-    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([400, 150, 400]);
+    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(new Array(350, 150, 350, 150, 450));
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return;
     const ctx = new AudioCtx();
     const t = ctx.currentTime;
-    [987.77, 1318.51].forEach((f, i) => {
+    new Array(987.77, 1318.51).forEach((f, i) => {
       const osc = ctx.createOscillator();
       const g = ctx.createGain();
       osc.type = 'sine';
@@ -95,83 +95,84 @@ function VentanaAvisoRider({ aviso, onCerrar }) {
 export default function App() {
   const [rider, setRider] = useState(null);
   const [tel, setTel] = useState('');
-  const [pass, setPass] = useState('');
-  const [tab, setTab] = useState('disponibles');
+  const [clave, setClave] = useState('');
   const [pedidos, setPedidos] = useState([]);
+  const [tab, setTab] = useState('disponibles');
   const [cargando, setCargando] = useState(false);
   const [aviso, setAviso] = useState(null);
-  const idsDisponiblesRef = useRef(null);
+  const conocidosRef = useRef(null);
 
   const mostrarAviso = (titulo, mensaje) => setAviso({ titulo, mensaje });
 
   useEffect(() => {
-    AsyncStorage.getItem('session_oriental_riders').then(s => {
+    AsyncStorage.getItem('session_oriental_rider').then(s => {
       if (s) setRider(JSON.parse(s));
     });
   }, []);
 
   useEffect(() => {
     if (!rider?.id) return;
-    cargarPedidos();
-    const timer = setInterval(cargarPedidos, 5000);
-    return () => clearInterval(timer);
+    cargarTodo();
+    const t = setInterval(cargarTodo, 4000);
+    return () => clearInterval(t);
   }, [rider?.id]);
 
-  useEffect(() => {
-    const disp = (pedidos || []).filter(p => p.tipo_entrega === 'DELIVERY' && !p.rider_id && (p.estado === 'Listo' || p.estado_rider === 'Disponible'));
-    if (idsDisponiblesRef.current === null) {
-      idsDisponiblesRef.current = new Set(disp.map(p => p.id));
-      return;
-    }
-    const nuevos = disp.filter(p => !idsDisponiblesRef.current.has(p.id));
-    disp.forEach(p => idsDisponiblesRef.current.add(p.id));
-    if (nuevos.length > 0) sonarAlertaRider();
-  }, [pedidos]);
-
-  async function cargarPedidos() {
+  async function cargarTodo() {
     try {
-      const res = await apiRest('pedidos?select=*,perfiles(nombre_completo,telefono),pedido_detalles(*)&order=creado_en.desc');
-      setPedidos(res || []);
+      const [peds, perfs] = await Promise.all([
+        apiRest('pedidos?select=*,perfiles(nombre_completo,telefono),pedido_detalles(*)&tipo_entrega=eq.DELIVERY&order=creado_en.desc'),
+        apiRest(`perfiles?select=puntos&id=eq.${rider.id}&limit=1`)
+      ]);
+      const lista = peds || [];
+      if (conocidosRef.current === null) {
+        conocidosRef.current = new Set(lista.filter(p => p.estado === 'Listo' && !p.rider_id).map(p => p.id));
+      } else {
+        const nuevos = lista.filter(p => p.estado === 'Listo' && !p.rider_id && !conocidosRef.current.has(p.id));
+        lista.forEach(p => { if (p.estado === 'Listo' && !p.rider_id) conocidosRef.current.add(p.id); });
+        if (nuevos.length > 0) sonarAlertaRider();
+      }
+      setPedidos(lista);
+      if (Array.isArray(perfs) && perfs.length > 0) {
+        setRider(prev => prev ? { ...prev, puntos: Number(perfs.at(0).puntos || 0) } : prev);
+      }
     } catch (e) {}
   }
 
-  async function iniciarSesion() {
-    const t = limpiarTel(tel);
-    if (t.length < 6 || !pass.trim()) return mostrarAviso('Datos incompletos', 'Ingresa teléfono y contraseña.');
+  async function ingresarRider() {
+    const tLimpio = limpiarTel(tel);
+    if (tLimpio.length < 6 || !clave.trim()) return mostrarAviso('Datos incompletos', 'Ingresa tu teléfono y contraseña.');
     setCargando(true);
     try {
-      const res = await apiRest(`perfiles?select=*&telefono=eq.${t}&limit=1`);
-      const p = Array.isArray(res) && res.length > 0 ? res.at(0) : null;
-      if (!p) throw new Error('Motorizado no registrado.');
-      if (p.rol !== 'repartidor') throw new Error('Esta cuenta no tiene rol de repartidor.');
-      if (String(p.password_hash || '') !== pass.trim()) throw new Error('Contraseña incorrecta.');
-      setRider(p);
-      await AsyncStorage.setItem('session_oriental_riders', JSON.stringify(p));
-      sonarAlertaRider();
+      const res = await apiRest(`perfiles?select=*&telefono=eq.${tLimpio}&limit=1`);
+      const perfil = Array.isArray(res) && res.length > 0 ? res.at(0) : null;
+      if (!perfil || perfil.rol !== 'repartidor') throw new Error('Esta cuenta no está registrada como repartidor.');
+      if (String(perfil.password_hash || '') !== clave.trim()) throw new Error('Contraseña incorrecta.');
+      setRider(perfil);
+      await AsyncStorage.setItem('session_oriental_rider', JSON.stringify(perfil));
     } catch (e) {
-      mostrarAviso('No se pudo ingresar', e.message);
+      mostrarAviso('Error de acceso', e.message);
     } finally {
       setCargando(false);
     }
   }
 
   async function cerrarSesion() {
-    await AsyncStorage.removeItem('session_oriental_riders');
+    await AsyncStorage.removeItem('session_oriental_rider');
     setRider(null);
+    setPedidos([]);
   }
-
-  async function tomarPedido(ped) {
+    async function tomarPedido(p) {
     setCargando(true);
     try {
-      await apiRest(`pedidos?id=eq.${ped.id}`, 'PATCH', {
+      await apiRest(`pedidos?id=eq.${p.id}`, 'PATCH', {
         rider_id: rider.id,
         rider_nombre: rider.nombre_completo,
-        estado_rider: 'Recogiendo en local',
-        estado: 'Listo'
+        estado_rider: 'Asignado',
+        estado: 'En camino'
       });
-      await cargarPedidos();
-      setTab('encurso');
-      mostrarAviso('Pedido aceptado', `Ve al local a recoger el pedido ${ped.numero_pedido}.`);
+      await cargarTodo();
+      setTab('activos');
+      mostrarAviso('Pedido tomado', `Has aceptado el pedido ${p.numero_pedido}.`);
     } catch (e) {
       mostrarAviso('Error', e.message);
     } finally {
@@ -179,123 +180,72 @@ export default function App() {
     }
   }
 
-  async function actualizarPasoRider(ped, paso) {
+  async function cambiarEstadoEntrega(p, nuevoEstadoRider) {
     setCargando(true);
     try {
-      if (paso === 'En camino') {
-        await apiRest(`pedidos?id=eq.${ped.id}`, 'PATCH', {
-          estado_rider: 'En camino',
-          estado: 'En camino'
-        });
-        mostrarAviso('En camino', 'Se notificó al cliente que vas en camino con su pedido.');
-      } else if (paso === 'En la puerta') {
-        await apiRest(`pedidos?id=eq.${ped.id}`, 'PATCH', {
-          estado_rider: 'En la puerta'
-        });
-        mostrarAviso('Cliente notificado', 'Se envió una alerta avisando que ya estás en la puerta.');
-      } else if (paso === 'Entregado') {
-        if (!ped.recibido_cliente) {
-          mostrarAviso('Falta confirmación del cliente', 'El cliente aún no ha confirmado "Pedido Recibido" en su app Club Sazón. Pídele que pulse el botón verde en su pantalla.');
-          setCargando(false);
-          return;
-        }
-        await apiRest(`pedidos?id=eq.${ped.id}`, 'PATCH', {
+      if (nuevoEstadoRider === 'Entregado') {
+        const bonoPuntos = await obtenerBonoPuntosRider();
+        await apiRest(`pedidos?id=eq.${p.id}`, 'PATCH', {
           estado_rider: 'Entregado',
           estado: 'Completado'
         });
-        const bonoPts = await obtenerBonoPuntosRider();
-        if (bonoPts > 0) {
-          const perfilAct = await apiRest(`perfiles?select=puntos&id=eq.${rider.id}&limit=1`);
-          const ptsActuales = Number((Array.isArray(perfilAct) && perfilAct.at(0)?.puntos) || rider.puntos || 0);
-          const nuevosPts = ptsActuales + bonoPts;
-          await apiRest(`perfiles?id=eq.${rider.id}`, 'PATCH', { puntos: nuevosPts });
-          await apiRest('historial_puntos', 'POST', {
-            cliente_id: rider.id,
-            cantidad: bonoPts,
-            descripcion: `Bono +${bonoPts} pts por entrega ${ped.numero_pedido}`
-          });
-          const riderAct = { ...rider, puntos: nuevosPts };
-          setRider(riderAct);
-          await AsyncStorage.setItem('session_oriental_riders', JSON.stringify(riderAct));
-          mostrarAviso('Entrega finalizada!', `Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)} y +${bonoPts} puntos Club Sazón.`);
-        } else {
-          mostrarAviso('Entrega finalizada!', `Ganaste S/ ${Number(ped.costo_delivery || 0).toFixed(2)}.`);
+        const [perf] = await apiRest(`perfiles?select=puntos&id=eq.${rider.id}&limit=1`);
+        const ptsActual = Number(perf?.puntos || 0);
+        await apiRest(`perfiles?id=eq.${rider.id}`, 'PATCH', { puntos: ptsActual + bonoPuntos });
+        await cargarTodo();
+        mostrarAviso('¡Entrega completada!', `Ganaste +${bonoPuntos} puntos y se registró tu tarifa de delivery.`);
+      } else {
+        await apiRest(`pedidos?id=eq.${p.id}`, 'PATCH', { estado_rider: nuevoEstadoRider });
+        await cargarTodo();
+        if (nuevoEstadoRider === 'En la puerta') {
+          mostrarAviso('Cliente notificado', 'Se envió la alerta de llegada al cliente. Pídele que confirme recepción.');
         }
       }
-      await cargarPedidos();
     } catch (e) {
       mostrarAviso('Error', e.message);
     } finally {
       setCargando(false);
     }
   }
-    function abrirMapaRuta(ped) {
-    const partes = String(ped.direccion || '').split('|');
-    const linkMaps = partes.length > 1 ? partes.at(1).trim() : '';
-    if (linkMaps.startsWith('http')) {
-      Linking.openURL(linkMaps);
-    } else {
-      const q = encodeURIComponent(`${partes.at(0) || ''} ${ped.distrito || ''}`.trim());
-      Linking.openURL(`https://google.com{q}`);
-    }
+
+  function abrirMaps(dirRaw) {
+    const partes = String(dirRaw || '').split('|');
+    const url = partes.length > 1 ? partes.at(1).trim() : `https://google.com{encodeURIComponent(partes.at(0) || '')}`;
+    Linking.openURL(url);
   }
 
-  function contactarClienteWhatsApp(ped) {
-    const telCli = String(ped.perfiles?.telefono || '').replace(/\D/g, '');
-    if (!telCli) return mostrarAviso('Sin teléfono', 'El cliente no tiene un teléfono registrado.');
-    const telFinal = telCli.length === 9 ? '51' + telCli : telCli;
-    const msg = encodeURIComponent(
-      `Hola ${ped.perfiles?.nombre_completo || ''}, soy ${rider.nombre_completo}, tu repartidor de El Sazón Oriental. Ya estoy en camino / en la puerta con tu pedido ${ped.numero_pedido}.`
-    );
-    Linking.openURL(`https://wa.me{telFinal}?text=${msg}`);
+  function abrirWhatsApp(telCli, numPed) {
+    const limpio = limpiarTel(telCli);
+    if (!limpio) return mostrarAviso('Sin teléfono', 'Este cliente no tiene teléfono registrado.');
+    const msg = `Hola, soy ${rider.nombre_completo}, tu repartidor de El Sazón Oriental con tu pedido ${numPed}.`;
+    Linking.openURL(`https://wa.me{limpio}?text=${encodeURIComponent(msg)}`);
   }
-
-  if (!rider) {
+    if (!rider) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: FONDO, justifyContent: 'center', padding: 22 }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: FONDO, paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 0, justifyContent: 'center', padding: 20 }}>
         <VentanaAvisoRider aviso={aviso} onCerrar={() => setAviso(null)} />
-        <View style={{ alignItems: 'center', marginBottom: 24 }}>
-          <Image source={LOGO_RIDERS} style={{ width: 130, height: 130, borderRadius: 24, marginBottom: 12 }} resizeMode="contain" />
-          <Text style={{ color: '#FFF', fontSize: 22, fontWeight: '900', letterSpacing: 1 }}>ORIENTAL RIDERS</Text>
-          <Text style={{ color: DORADO, fontSize: 12, fontWeight: '800', marginTop: 4 }}>App Exclusiva para Repartidores</Text>
+        <View style={{ backgroundColor: TARJETA, borderRadius: 20, borderWidth: 1.5, borderColor: ROJO, padding: 22 }}>
+          <Image source={LOGO_RIDERS} style={{ width: 96, height: 96, borderRadius: 20, alignSelf: 'center', marginBottom: 12 }} />
+          <Text style={{ color: '#FFF', fontSize: 22, fontWeight: '900', textAlign: 'center' }}>ORIENTAL RIDERS</Text>
+          <Text style={{ color: DORADO, fontSize: 12, fontWeight: '800', textAlign: 'center', marginBottom: 18 }}>Panel Exclusivo de Motorizados</Text>
+          <TextInput style={{ backgroundColor: '#1B1B22', borderWidth: 1, borderColor: BORDE, borderRadius: 12, color: '#FFF', padding: 13, marginBottom: 10 }} placeholder="Teléfono registrado" placeholderTextColor="#6B7280" keyboardType="phone-pad" value={tel} onChangeText={setTel} />
+          <TextInput style={{ backgroundColor: '#1B1B22', borderWidth: 1, borderColor: BORDE, borderRadius: 12, color: '#FFF', padding: 13, marginBottom: 14 }} placeholder="Contraseña" placeholderTextColor="#6B7280" secureTextEntry value={clave} onChangeText={setClave} />
+          <TouchableOpacity style={{ backgroundColor: ROJO, borderRadius: 12, paddingVertical: 14, alignItems: 'center' }} onPress={ingresarRider} disabled={cargando}>
+            <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 15 }}>{cargando ? 'INGRESANDO...' : 'INGRESAR A MIS RUTAS'}</Text>
+          </TouchableOpacity>
         </View>
-        <TextInput
-          style={{ backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, borderRadius: 12, color: '#FFF', padding: 14, marginBottom: 12, fontSize: 15 }}
-          placeholder="Número de teléfono"
-          placeholderTextColor="#6B7280"
-          keyboardType="phone-pad"
-          value={tel}
-          onChangeText={setTel}
-        />
-        <TextInput
-          style={{ backgroundColor: TARJETA, borderWidth: 1, borderColor: BORDE, borderRadius: 12, color: '#FFF', padding: 14, marginBottom: 16, fontSize: 15 }}
-          placeholder="Contraseña"
-          placeholderTextColor="#6B7280"
-          secureTextEntry
-          value={pass}
-          onChangeText={setPass}
-        />
-        <TouchableOpacity
-          style={{ backgroundColor: ROJO, borderRadius: 12, paddingVertical: 15, alignItems: 'center' }}
-          onPress={iniciarSesion}
-          disabled={cargando}
-        >
-          <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 15 }}>{cargando ? 'INGRESANDO...' : 'INGRESAR A MI TURNO'}</Text>
-        </TouchableOpacity>
       </SafeAreaView>
     );
   }
 
-  const disponibles = pedidos.filter(p => p.tipo_entrega === 'DELIVERY' && !p.rider_id && (p.estado === 'Listo' || p.estado_rider === 'Disponible'));
-  const enCurso = pedidos.filter(p => p.rider_id === rider.id && p.estado !== 'Completado' && p.estado !== 'Cancelado');
-  const entregados = pedidos.filter(p => p.rider_id === rider.id && p.estado === 'Completado');
-  const gananciaDelivery = entregados.reduce((acc, p) => acc + Number(p.costo_delivery || 0), 0);
-  const efectivoPendienteCaja = entregados
-    .filter(p => p.metodo_pago === 'Efectivo' && p.estado_rider !== 'Liquidado en caja')
-    .reduce((acc, p) => acc + Number(p.total || 0), 0);
+  const hoy = new Date().toDateString();
+  const disponibles = pedidos.filter(p => p.estado === 'Listo' && !p.rider_id);
+  const misActivos = pedidos.filter(p => p.rider_id === rider.id && p.estado !== 'Completado' && p.estado !== 'Cancelado');
+  const misCompletados = pedidos.filter(p => p.rider_id === rider.id && p.estado === 'Completado');
+  const ganadosHoy = misCompletados.filter(p => new Date(p.creado_en).toDateString() === hoy).reduce((a, p) => a + Number(p.costo_delivery || 0), 0);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: FONDO }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: FONDO, paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 0 }}>
       <VentanaAvisoRider aviso={aviso} onCerrar={() => setAviso(null)} />
       <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 34 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, borderBottomWidth: 1, borderBottomColor: BORDE, paddingBottom: 10 }}>
@@ -306,151 +256,95 @@ export default function App() {
               <Text style={{ color: DORADO, fontSize: 11, fontWeight: '800' }}>🛵 Motorizado • {rider.puntos || 0} pts</Text>
             </View>
           </View>
-          <TouchableOpacity onPress={cerrarSesion} style={{ backgroundColor: '#252530', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}>
-            <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 12 }}>Salir</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            <TouchableOpacity onPress={() => { sonarAlertaRider(); mostrarAviso('🔔 Sonido activo', 'Las alertas sonoras y vibración de nuevos pedidos están activadas.'); }} style={{ backgroundColor: '#16A34A', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8 }}>
+              <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 11 }}>🔔 SONIDO</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={cerrarSesion} style={{ backgroundColor: '#252530', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}>
+              <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 12 }}>Salir</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        <View style={{ backgroundColor: TARJETA, borderWidth: 1.5, borderColor: DORADO, borderRadius: 14, padding: 12, marginBottom: 14 }}>
-          <Text style={{ color: '#9CA3AF', fontSize: 11, fontWeight: '800' }}>HORARIO DE TRABAJO ASIGNADO</Text>
-          <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '900', marginTop: 2 }}>{rider.direccion_predeterminada || 'Lun a Dom: 12:00 pm - 10:00 pm'}</Text>
+        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+          <View style={{ flex: 1, backgroundColor: TARJETA, borderRadius: 12, padding: 10, borderWidth: 1, borderColor: BORDE }}>
+            <Text style={{ color: '#9CA3AF', fontSize: 10, fontWeight: '800' }}>DELIVERY HOY</Text>
+            <Text style={{ color: '#22C55E', fontSize: 18, fontWeight: '900', marginTop: 2 }}>S/ {ganadosHoy.toFixed(2)}</Text>
+          </View>
+          <View style={{ flex: 1, backgroundColor: TARJETA, borderRadius: 12, padding: 10, borderWidth: 1, borderColor: BORDE }}>
+            <Text style={{ color: '#9CA3AF', fontSize: 10, fontWeight: '800' }}>ENTREGAS HOY</Text>
+            <Text style={{ color: DORADO, fontSize: 18, fontWeight: '900', marginTop: 2 }}>{misCompletados.filter(p => new Date(p.creado_en).toDateString() === hoy).length}</Text>
+          </View>
         </View>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, marginBottom: 14 }} contentContainerStyle={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            <View style={{ flexDirection: 'row', gap: 6, marginBottom: 14 }}>
           {[
             { id: 'disponibles', label: `Disponibles (${disponibles.length})` },
-            { id: 'encurso', label: `En ruta (${enCurso.length})` },
-            { id: 'ganancias', label: 'Mis Pagos' },
-            { id: 'historial', label: `Historial (${entregados.length})` }
+            { id: 'activos', label: `En ruta (${misActivos.length})` },
+            { id: 'historial', label: `Historial (${misCompletados.length})` }
           ].map(t => (
-            <TouchableOpacity
-              key={t.id}
-              style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: tab === t.id ? ROJO : TARJETA, borderWidth: 1, borderColor: tab === t.id ? ROJO : BORDE }}
-              onPress={() => setTab(t.id)}
-            >
-              <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 12 }}>{t.label}</Text>
+            <TouchableOpacity key={t.id} onPress={() => setTab(t.id)} style={{ flex: 1, backgroundColor: tab === t.id ? ROJO : TARJETA, borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: tab === t.id ? ROJO : BORDE }}>
+              <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 11 }}>{t.label}</Text>
             </TouchableOpacity>
           ))}
-        </ScrollView>
+        </View>
 
-        {tab === 'disponibles' && (
-          <View>
-            {disponibles.length === 0 ? (
-              <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: BORDE }}>
-                <Text style={{ color: '#9CA3AF', fontSize: 14 }}>No hay pedidos listos en cocina por ahora.</Text>
-              </View>
-            ) : (
-              disponibles.map(p => (
-                <View key={p.id} style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1.5, borderColor: DORADO }}>
-                  <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 16 }}>{p.numero_pedido} • {p.perfiles?.nombre_completo || 'Cliente'}</Text>
-                  <Text style={{ color: '#D1D5DB', fontSize: 13, marginTop: 4 }}>Destino: {p.distrito} - {String(p.direccion || '').split('|').at(0)}</Text>
-                  <Text style={{ color: '#22C55E', fontWeight: '900', fontSize: 14, marginTop: 4 }}>Tu ganancia delivery: S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
-                  <Text style={{ color: DORADO, fontSize: 12, marginTop: 2 }}>Cobro al cliente: S/ {Number(p.total || 0).toFixed(2)} ({p.metodo_pago})</Text>
-                  <TouchableOpacity style={{ backgroundColor: ROJO, borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 }} onPress={() => tomarPedido(p)} disabled={cargando}>
-                    <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>🛵 ACEPTAR ENTREGA</Text>
-                  </TouchableOpacity>
-                </View>
-              ))
-            )}
+        {tab === 'disponibles' && (disponibles.length === 0 ? (
+          <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center' }}><Text style={{ color: '#9CA3AF' }}>No hay pedidos listos en cocina por ahora.</Text></View>
+        ) : disponibles.map(p => (
+          <View key={p.id} style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1.5, borderColor: DORADO }}>
+            <Text style={{ color: DORADO, fontWeight: '900', fontSize: 15 }}>{p.numero_pedido} • Delivery S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
+            <Text style={{ color: '#FFF', fontWeight: '700', marginTop: 4 }}>Cliente: {p.perfiles?.nombre_completo || 'Cliente'} ({p.perfiles?.telefono || ''})</Text>
+            <Text style={{ color: '#D1D5DB', fontSize: 12, marginTop: 2 }}>Dir: {p.distrito} - {String(p.direccion || '').split('|').at(0)}</Text>
+            <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>Cobro: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
+            <TouchableOpacity style={{ backgroundColor: '#16A34A', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 }} onPress={() => tomarPedido(p)} disabled={cargando}>
+              <Text style={{ color: '#FFF', fontWeight: '900' }}>🛵 TOMAR PEDIDO</Text>
+            </TouchableOpacity>
           </View>
-        )}
-                    {tab === 'encurso' && (
-          <View>
-            {enCurso.length === 0 ? (
-              <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: BORDE }}>
-                <Text style={{ color: '#9CA3AF', fontSize: 14 }}>No tienes entregas en curso.</Text>
-              </View>
-            ) : (
-              enCurso.map(p => (
-                <View key={p.id} style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1.5, borderColor: ROJO }}>
-                  <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 16 }}>{p.numero_pedido} • {p.perfiles?.nombre_completo || 'Cliente'}</Text>
-                  <Text style={{ color: '#D1D5DB', fontSize: 13, marginTop: 4 }}>Tel: {p.perfiles?.telefono || 'No registrado'}</Text>
-                  <Text style={{ color: '#D1D5DB', fontSize: 13, marginTop: 2 }}>Dir: {p.distrito} - {String(p.direccion || '').split('|').at(0)}</Text>
-                  <Text style={{ color: DORADO, fontWeight: '800', fontSize: 13, marginTop: 4 }}>
-                    {p.metodo_pago === 'Efectivo' ? `💵 COBRAR EN EFECTIVO: S/ ${Number(p.total || 0).toFixed(2)}` : `✅ PAGADO CON ${String(p.metodo_pago || '').toUpperCase()} (NO COBRAR)`}
-                  </Text>
-                  <Text style={{ color: p.recibido_cliente ? '#22C55E' : '#F59E0B', fontWeight: '900', fontSize: 12, marginTop: 6 }}>
-                    {p.recibido_cliente ? '✅ Cliente ya confirmó recepción en su app' : '⏳ Esperando que el cliente confirme recepción en su app'}
-                  </Text>
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                    <TouchableOpacity style={{ flex: 1, backgroundColor: '#0284C7', borderRadius: 10, paddingVertical: 11, alignItems: 'center' }} onPress={() => abrirMapaRuta(p)}>
-                      <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 12 }}>🗺️ GOOGLE MAPS</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={{ flex: 1, backgroundColor: '#128C7E', borderRadius: 10, paddingVertical: 11, alignItems: 'center' }} onPress={() => contactarClienteWhatsApp(p)}>
-                      <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 12 }}>💬 WHATSAPP</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {p.estado_rider === 'Recogiendo en local' && (
-                    <TouchableOpacity style={{ backgroundColor: '#2563EB', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 8 }} onPress={() => actualizarPasoRider(p, 'En camino')}>
-                      <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>🛵 CONFIRMAR RECOGIDA (EN CAMINO)</Text>
-                    </TouchableOpacity>
-                  )}
-                  {p.estado_rider === 'En camino' && (
-                    <TouchableOpacity style={{ backgroundColor: '#D97706', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 8 }} onPress={() => actualizarPasoRider(p, 'En la puerta')}>
-                      <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>🔔 ESTOY AQUÍ (EN LA PUERTA)</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    style={{ backgroundColor: p.recibido_cliente ? '#16A34A' : '#374151', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 }}
-                    onPress={() => actualizarPasoRider(p, 'Entregado')}
-                  >
-                    <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 13 }}>
-                      {p.recibido_cliente ? '✅ FINALIZAR ENTREGA (SUMAR GANANCIA)' : '🔒 BLOQUEADO HASTA CONFIRMACIÓN DEL CLIENTE'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ))
-            )}
-          </View>
-        )}
+        )))}
 
-        {tab === 'ganancias' && (
-          <View>
-            <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 16, borderWidth: 1.5, borderColor: '#16A34A', marginBottom: 12 }}>
-              <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '800' }}>TUS GANANCIAS ACUMULADAS (DELIVERY)</Text>
-              <Text style={{ color: '#22C55E', fontSize: 28, fontWeight: '900', marginTop: 4 }}>S/ {gananciaDelivery.toFixed(2)}</Text>
-              <Text style={{ color: '#D1D5DB', fontSize: 12, marginTop: 4 }}>Entregas completadas: {entregados.length}</Text>
+        {tab === 'activos' && (misActivos.length === 0 ? (
+          <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center' }}><Text style={{ color: '#9CA3AF' }}>No tienes entregas activas en este momento.</Text></View>
+        ) : misActivos.map(p => (
+          <View key={p.id} style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1.5, borderColor: ROJO }}>
+            <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 16 }}>{p.numero_pedido} • {p.estado_rider}</Text>
+            <Text style={{ color: DORADO, fontWeight: '800', marginTop: 4 }}>Cliente: {p.perfiles?.nombre_completo} • Tel: {p.perfiles?.telefono}</Text>
+            <Text style={{ color: '#D1D5DB', fontSize: 12, marginTop: 2 }}>Dirección: {p.distrito} - {String(p.direccion || '').split('|').at(0)}</Text>
+            <Text style={{ color: '#22C55E', fontWeight: '900', marginTop: 4 }}>Total: S/ {Number(p.total).toFixed(2)} ({p.metodo_pago})</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+              <TouchableOpacity style={{ flex: 1, backgroundColor: '#0284C7', borderRadius: 10, paddingVertical: 10, alignItems: 'center' }} onPress={() => abrirMaps(p.direccion)}>
+                <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 12 }}>🗺️ GOOGLE MAPS</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ flex: 1, backgroundColor: '#128C7E', borderRadius: 10, paddingVertical: 10, alignItems: 'center' }} onPress={() => abrirWhatsApp(p.perfiles?.telefono, p.numero_pedido)}>
+                <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 12 }}>💬 WHATSAPP</Text>
+              </TouchableOpacity>
             </View>
-            <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 16, borderWidth: 1.5, borderColor: efectivoPendienteCaja > 0 ? ROJO : BORDE }}>
-              <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '800' }}>EFECTIVO COBRADO POR RENDIR A CAJA</Text>
-              <Text style={{ color: efectivoPendienteCaja > 0 ? '#F87171' : '#22C55E', fontSize: 26, fontWeight: '900', marginTop: 4 }}>S/ {efectivoPendienteCaja.toFixed(2)}</Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 4 }}>
-                {efectivoPendienteCaja > 0 ? 'Entrega este monto en caja al finalizar tu turno.' : 'No tienes efectivo pendiente por rendir.'}
-              </Text>
-            </View>
-          </View>
-        )}
-
-        {tab === 'historial' && (
-          <View>
-            <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '900', marginBottom: 10 }}>HISTORIAL DE ENTREGAS ({entregados.length})</Text>
-            {entregados.length === 0 ? (
-              <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: BORDE }}>
-                <Text style={{ color: '#9CA3AF', fontSize: 14 }}>Aún no tienes entregas completadas.</Text>
-              </View>
+            {p.estado_rider !== 'En la puerta' && (
+              <TouchableOpacity style={{ backgroundColor: '#D97706', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 }} onPress={() => cambiarEstadoEntrega(p, 'En la puerta')} disabled={cargando}>
+                <Text style={{ color: '#FFF', fontWeight: '900' }}>📍 YA LLEGUÉ / ESTOY EN LA PUERTA</Text>
+              </TouchableOpacity>
+            )}
+            {p.recibido_cliente ? (
+              <TouchableOpacity style={{ backgroundColor: '#16A34A', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 }} onPress={() => cambiarEstadoEntrega(p, 'Entregado')} disabled={cargando}>
+                <Text style={{ color: '#FFF', fontWeight: '900' }}>✅ FINALIZAR ENTREGA (+PUNTOS)</Text>
+              </TouchableOpacity>
             ) : (
-              entregados.map(p => (
-                <View key={p.id} style={{ backgroundColor: TARJETA, borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: BORDE }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={{ color: '#FFF', fontWeight: '900', fontSize: 14 }}>{p.numero_pedido} • {p.perfiles?.nombre_completo || 'Cliente'}</Text>
-                    <Text style={{ color: '#22C55E', fontWeight: '900', fontSize: 14 }}>+S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
-                  </View>
-                  <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 3 }}>{new Date(p.creado_en).toLocaleString()} • {p.metodo_pago}</Text>
-                  <Text style={{ color: '#D1D5DB', fontSize: 12, marginTop: 3 }}>Destino: {p.distrito} - {String(p.direccion || '').split('|').at(0)}</Text>
-                  {p.metodo_pago === 'Efectivo' && (
-                    <Text style={{ color: p.estado_rider === 'Liquidado en caja' ? '#22C55E' : ROJO, fontSize: 11, fontWeight: '800', marginTop: 5 }}>
-                      {p.estado_rider === 'Liquidado en caja'
-                        ? `✅ Efectivo S/ ${Number(p.total || 0).toFixed(2)} liquidado en caja`
-                        : `⚠️ Efectivo S/ ${Number(p.total || 0).toFixed(2)} pendiente de rendir`}
-                    </Text>
-                  )}
-                </View>
-              ))
+              <View style={{ backgroundColor: '#1E1E28', borderRadius: 10, padding: 10, marginTop: 8, borderWidth: 1, borderColor: DORADO }}>
+                <Text style={{ color: DORADO, fontSize: 11, fontWeight: '800', textAlign: 'center' }}>⏳ Esperando que el cliente pulse "Pedido recibido" en su app para finalizar.</Text>
+              </View>
             )}
           </View>
-        )}
+        )))}
+
+        {tab === 'historial' && (misCompletados.length === 0 ? (
+          <View style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 24, alignItems: 'center' }}><Text style={{ color: '#9CA3AF' }}>Aún no tienes entregas completadas.</Text></View>
+        ) : misCompletados.map(p => (
+          <View key={p.id} style={{ backgroundColor: TARJETA, borderRadius: 14, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: BORDE }}>
+            <Text style={{ color: '#FFF', fontWeight: '900' }}>{p.numero_pedido} • Delivery S/ {Number(p.costo_delivery || 0).toFixed(2)}</Text>
+            <Text style={{ color: '#9CA3AF', fontSize: 11 }}>{new Date(p.creado_en).toLocaleString()} • {p.metodo_pago} • {p.estado_rider}</Text>
+          </View>
+        )))}
       </ScrollView>
     </SafeAreaView>
   );
-                      }
-             
+          }
+                                 
